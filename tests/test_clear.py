@@ -80,6 +80,11 @@ def test_Notebook_is_valid_json() -> None:
     assert data["nbformat"] == 4
     assert len(data["cells"]) >= 7
 
+    webcam_nb_path = Path(__file__).resolve().parents[1] / "Model" / "webcam_test.ipynb"
+    w_data = json.loads(webcam_nb_path.read_text(encoding="utf-8"))
+    assert w_data["nbformat"] == 4
+    assert len(w_data["cells"]) >= 5
+
 
 def test_fastapi_studio_endpoints() -> None:
     client = TestClient(app)

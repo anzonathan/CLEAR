@@ -1,0 +1,696 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>CLEAR | Clay-Court Line Evaluation & Automated Refereeing</title>
+  <style>
+    :root {
+      --bg-obsidian: #0b0f17;
+      --bg-panel: #131a26;
+      --bg-card: #1a2333;
+      --border-subtle: #28354a;
+      --clay-primary: #c85a32;
+      --clay-soft: #e07a5f;
+      --tennis-yellow: #d9f99d;
+      --gold-warn: #facc15;
+      --call-in: #22c55e;
+      --call-out: #ef4444;
+      --cyan-accent: #38bdf8;
+      --purple-accent: #c084fc;
+      --text-main: #f8fafc;
+      --text-muted: #94a3b8;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: var(--bg-obsidian);
+      color: var(--text-main);
+      font-family: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", Roboto, sans-serif;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+    header {
+      background: linear-gradient(90deg, #111827 0%, #1e293b 60%, #3b1d16 100%);
+      border-bottom: 1px solid var(--border-subtle);
+      padding: 12px 24px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+    }
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .brand-badge {
+      background: var(--clay-primary);
+      color: #fff;
+      font-weight: 800;
+      letter-spacing: 0.08em;
+      padding: 6px 12px;
+      border-radius: 6px;
+      font-size: 0.95rem;
+    }
+    .brand-sub {
+      font-size: 0.85rem;
+      color: var(--text-muted);
+    }
+    .score-banner {
+      display: flex;
+      align-items: center;
+      gap: 18px;
+      background: rgba(15, 23, 42, 0.85);
+      border: 1px solid var(--border-subtle);
+      padding: 8px 18px;
+      border-radius: 8px;
+    }
+    .score-player {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-size: 0.85rem;
+      font-weight: 600;
+    }
+    .score-pill {
+      background: #1e3a8a;
+      color: #fff;
+      padding: 2px 9px;
+      border-radius: 4px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-weight: 700;
+    }
+    .layout {
+      display: grid;
+      grid-template-columns: 1fr 380px;
+      gap: 18px;
+      padding: 18px 24px;
+      flex: 1;
+    }
+    @media (max-width: 1180px) {
+      .layout { grid-template-columns: 1fr; }
+    }
+    .panel {
+      background: var(--bg-panel);
+      border: 1px solid var(--border-subtle);
+      border-radius: 12px;
+      padding: 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+    .panel-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      border-bottom: 1px solid var(--border-subtle);
+      padding-bottom: 10px;
+    }
+    .panel-title {
+      font-size: 0.92rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: #e2e8f0;
+    }
+    .viewport-wrap {
+      position: relative;
+      width: 100%;
+      background: #05080f;
+      border-radius: 8px;
+      overflow: hidden;
+      border: 1px solid var(--border-subtle);
+      aspect-ratio: 16 / 9;
+    }
+    #courtCanvas {
+      width: 100%;
+      height: 100%;
+      display: block;
+      cursor: crosshair;
+    }
+    .controls-row {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 10px;
+      justify-content: space-between;
+    }
+    .btn-group {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-items: center;
+    }
+    button, select {
+      background: var(--bg-card);
+      color: var(--text-main);
+      border: 1px solid var(--border-subtle);
+      padding: 7px 12px;
+      border-radius: 6px;
+      font-size: 0.82rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+    button:hover, select:hover {
+      border-color: var(--cyan-accent);
+      background: #222f45;
+    }
+    button.primary {
+      background: var(--clay-primary);
+      border-color: var(--clay-soft);
+      color: #fff;
+    }
+    button.primary:hover {
+      background: #d9653b;
+    }
+    button.active-toggle {
+      background: rgba(56, 189, 248, 0.18);
+      border-color: var(--cyan-accent);
+      color: var(--cyan-accent);
+    }
+    .scrubber-wrap {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      width: 100%;
+    }
+    #frameSlider {
+      flex: 1;
+      accent-color: var(--clay-primary);
+    }
+    .mono {
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 0.82rem;
+    }
+    .bounces-strip {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 10px;
+    }
+    .bounce-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border-subtle);
+      border-left: 4px solid var(--call-in);
+      border-radius: 8px;
+      padding: 10px 12px;
+      cursor: pointer;
+      transition: transform 0.12s ease, border-color 0.12s ease;
+    }
+    .bounce-card.out { border-left-color: var(--call-out); }
+    .bounce-card.doubt { border-left-color: var(--gold-warn); }
+    .bounce-card:hover { transform: translateY(-2px); border-color: var(--cyan-accent); }
+    .call-badge {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 4px;
+      font-size: 0.75rem;
+      font-weight: 800;
+    }
+    .call-badge.in { background: rgba(34, 197, 94, 0.2); color: #4ade80; }
+    .call-badge.out { background: rgba(239, 68, 68, 0.2); color: #f87171; }
+    .call-badge.doubt-tag { background: rgba(250, 204, 21, 0.2); color: #facc15; margin-left: 6px; }
+    .radar-wrap {
+      display: flex;
+      justify-content: center;
+      background: #0d1522;
+      border-radius: 8px;
+      padding: 12px;
+      border: 1px solid var(--border-subtle);
+    }
+    #radarCanvas {
+      border-radius: 6px;
+      cursor: pointer;
+    }
+    .stats-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+    }
+    .stat-box {
+      background: var(--bg-card);
+      border: 1px solid var(--border-subtle);
+      border-radius: 8px;
+      padding: 10px;
+    }
+    .stat-label { font-size: 0.74rem; color: var(--text-muted); text-transform: uppercase; }
+    .stat-val { font-size: 1.15rem; font-weight: 800; margin-top: 3px; }
+    .hint-bar {
+      font-size: 0.78rem;
+      color: var(--text-muted);
+      background: rgba(56, 189, 248, 0.08);
+      border: 1px dashed rgba(56, 189, 248, 0.35);
+      padding: 8px 12px;
+      border-radius: 6px;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="brand">
+      <span class="brand-badge">CLEAR</span>
+      <div>
+        <div style="font-weight: 700; font-size: 0.95rem;">Clay-Court Line Evaluation & Automated Refereeing</div>
+        <div class="brand-sub">Single-Camera 6-Anchor Homography • 3-Frame Temporal Hybrid Tracker • UCU Capstone</div>
+      </div>
+    </div>
+    <div class="score-banner">
+      <div class="score-player">
+        <span style="color: var(--cyan-accent);">● P1 (NEAR)</span>
+        <span class="score-pill" id="scoreP1">0 | 0 | 15</span>
+      </div>
+      <span style="color: var(--text-muted);">vs</span>
+      <div class="score-player">
+        <span style="color: var(--purple-accent);">● P2 (FAR)</span>
+        <span class="score-pill" id="scoreP2">0 | 0 | 0</span>
+      </div>
+    </div>
+  </header>
+
+  <main class="layout">
+    <!-- Left Column: Video + Interactive Virtual Court Canvas + Bounce Replay Cards -->
+    <div style="display: flex; flex-direction: column; gap: 16px;">
+      <section class="panel">
+        <div class="panel-header">
+          <span class="panel-title">Live Virtual Court & Hawk-Eye Referee Viewport</span>
+          <div class="btn-group">
+            <button id="toggleVirtualBtn" class="active-toggle" onclick="toggleLayer('virtual')">Virtual Lines</button>
+            <button id="toggleDoubtBtn" class="active-toggle" onclick="toggleLayer('doubt')">±15cm Doubt Zone</button>
+            <button id="toggleTrailBtn" class="active-toggle" onclick="toggleLayer('trail')">Ball Trail</button>
+            <button id="toggleAnchorsBtn" class="active-toggle" onclick="toggleLayer('anchors')">Drag Anchors</button>
+          </div>
+        </div>
+
+        <div class="viewport-wrap">
+          <canvas id="courtCanvas" width="1280" height="720"></canvas>
+        </div>
+
+        <div class="scrubber-wrap">
+          <button id="playPauseBtn" class="primary" onclick="togglePlay()">⏸ Pause</button>
+          <button onclick="stepFrame(-1)">◀ -1f</button>
+          <button onclick="stepFrame(1)">+1f ▶</button>
+          <input type="range" id="frameSlider" min="0" max="279" value="0" oninput="onScrub(this.value)" />
+          <span class="mono" id="frameLabel">Frame 000 / 279 (60fps)</span>
+        </div>
+
+        <div class="controls-row">
+          <div class="btn-group">
+            <label class="mono" style="color: var(--text-muted);">Court:</label>
+            <select id="courtModeSelect" onchange="reRunPipeline()">
+              <option value="singles" selected>Singles (8.23m)</option>
+              <option value="doubles">Doubles (10.97m)</option>
+            </select>
+            <label class="mono" style="color: var(--text-muted);">Clay Lines:</label>
+            <select id="lineCondSelect" onchange="reRunPipeline()">
+              <option value="fresh">Fresh Painted Lines</option>
+              <option value="worn" selected>Worn Clay Lines (UCU)</option>
+              <option value="wiped">Rain-Wiped Lines (Virtual Only)</option>
+            </select>
+            <button class="primary" onclick="reRunPipeline()">↻ Re-Run Pipeline</button>
+          </div>
+          <div class="hint-bar" id="interactiveCallBox">
+            Tip: Click anywhere on the clay court to test instant homography IN/OUT judgment, or drag the 6 gold anchor pegs to recalibrate.
+          </div>
+        </div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-header">
+          <span class="panel-title">Automated Bounce Calls & Doubt-Zone Replay (Click to Jump to Frame)</span>
+          <span class="mono" id="calibBadge" style="color: var(--tennis-yellow);">6-Anchor Homography | Reproj Err: 2.5 cm</span>
+        </div>
+        <div class="bounces-strip" id="bouncesContainer"></div>
+      </section>
+    </div>
+
+    <!-- Right Column: 2D Top-Down Court Radar + Player & Ball Telemetry -->
+    <div style="display: flex; flex-direction: column; gap: 16px;">
+      <section class="panel">
+        <div class="panel-header">
+          <span class="panel-title">2D Top-Down Court Radar (ITF Metres)</span>
+          <span class="mono" id="ballSpeedBadge" style="color: var(--cyan-accent);">Ball: 0.0 km/h</span>
+        </div>
+        <div class="radar-wrap">
+          <canvas id="radarCanvas" width="240" height="420"></canvas>
+        </div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-header">
+          <span class="panel-title">Match & Player Tracking Analytics</span>
+          <span class="mono" style="color: var(--text-muted);">Zero-Shot Hybrid</span>
+        </div>
+        <div class="stats-grid" id="statsGrid"></div>
+      </section>
+    </div>
+  </main>
+
+  <script>
+    let STATE = null;
+    let currentFrame = 0;
+    let isPlaying = true;
+    let layers = { virtual: true, doubt: true, trail: true, anchors: true };
+    let draggingAnchor = null;
+    let customPointCall = null;
+    let bgImage = new Image();
+    let bgLoadedFrame = -1;
+
+    const courtCanvas = document.getElementById('courtCanvas');
+    const ctx = courtCanvas.getContext('2d');
+    const radarCanvas = document.getElementById('radarCanvas');
+    const rctx = radarCanvas.getContext('2d');
+
+    async function loadState() {
+      const res = await fetch('/api/state');
+      STATE = await res.json();
+      updateUI();
+      loadFrameImage(currentFrame);
+    }
+
+    function loadFrameImage(fIdx) {
+      bgImage.onload = () => {
+        bgLoadedFrame = fIdx;
+        drawViewport();
+      };
+      bgImage.src = `/api/frame/${fIdx}?t=${Date.now()}`;
+    }
+
+    function updateUI() {
+      if (!STATE) return;
+      const rep = STATE.report;
+      const sc = rep.score;
+      document.getElementById('scoreP1').textContent = `${sc.sets[0]} | ${sc.games[0]} | ${sc.points[0]}`;
+      document.getElementById('scoreP2').textContent = `${sc.sets[1]} | ${sc.games[1]} | ${sc.points[1]}`;
+      document.getElementById('calibBadge').textContent =
+        `${rep.calibration.method} | Uncert: ±${rep.calibration.reproj_error_cm} cm`;
+
+      const slider = document.getElementById('frameSlider');
+      slider.max = Math.max(0, STATE.frames.length - 1);
+
+      // Render bounce cards
+      const bWrap = document.getElementById('bouncesContainer');
+      bWrap.innerHTML = '';
+      rep.line_calling.bounces.forEach((b, idx) => {
+        const div = document.createElement('div');
+        div.className = `bounce-card ${b.is_in ? 'in' : 'out'} ${b.in_doubt_zone ? 'doubt' : ''}`;
+        div.onclick = () => jumpToFrame(b.frame_idx);
+        const sign = b.signed_margin_cm >= 0 ? '+' : '';
+        div.innerHTML = `
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+            <div>
+              <span class="call-badge ${b.is_in ? 'in' : 'out'}">${b.call}</span>
+              ${b.in_doubt_zone ? '<span class="call-badge doubt-tag">DOUBT ZONE</span>' : ''}
+            </div>
+            <span class="mono" style="color:var(--text-muted);">Frame #${b.frame_idx}</span>
+          </div>
+          <div class="mono" style="font-size:0.86rem; font-weight:700;">Margin: ${sign}${b.signed_margin_cm} cm</div>
+          <div style="font-size:0.76rem; color:var(--text-muted); margin-top:3px;">
+            Line: ${b.closest_line}<br/>
+            Court: (${b.x_m.toFixed(2)}m, ${b.y_m.toFixed(2)}m) • Conf: ${(b.confidence * 100).toFixed(0)}%
+          </div>
+        `;
+        bWrap.appendChild(div);
+      });
+
+      // Render stats grid
+      const p1 = rep.players['P1 (NEAR)'] || { distance_m: 0, max_speed_kmh: 0 };
+      const p2 = rep.players['P2 (FAR)'] || { distance_m: 0, max_speed_kmh: 0 };
+      const bt = rep.ball_tracking;
+      document.getElementById('statsGrid').innerHTML = `
+        <div class="stat-box">
+          <div class="stat-label">Ball Track Coverage</div>
+          <div class="stat-val" style="color:var(--tennis-yellow);">${bt.coverage_pct}%</div>
+        </div>
+        <div class="stat-box">
+          <div class="stat-label">Peak Ball Speed</div>
+          <div class="stat-val" style="color:var(--cyan-accent);">${bt.max_speed_kmh} km/h</div>
+        </div>
+        <div class="stat-box">
+          <div class="stat-label">P1 (Near) Distance</div>
+          <div class="stat-val">${p1.distance_m} m <span style="font-size:0.75rem;color:var(--text-muted);">(${p1.max_speed_kmh} km/h)</span></div>
+        </div>
+        <div class="stat-box">
+          <div class="stat-label">P2 (Far) Distance</div>
+          <div class="stat-val">${p2.distance_m} m <span style="font-size:0.75rem;color:var(--text-muted);">(${p2.max_speed_kmh} km/h)</span></div>
+        </div>
+      `;
+    }
+
+    function drawViewport() {
+      if (!STATE) return;
+      ctx.clearRect(0, 0, courtCanvas.width, courtCanvas.height);
+      if (bgImage.complete && bgImage.naturalWidth > 0) {
+        ctx.drawImage(bgImage, 0, 0, courtCanvas.width, courtCanvas.height);
+      }
+
+      // Draw interactive virtual lines overlay
+      if (layers.virtual && STATE.projected_lines) {
+        STATE.projected_lines.forEach(ln => {
+          ctx.beginPath();
+          ctx.moveTo(ln.p1_px[0], ln.p1_px[1]);
+          ctx.lineTo(ln.p2_px[0], ln.p2_px[1]);
+          ctx.strokeStyle = ln.category === 'net' ? '#fde047' : 'rgba(255,255,255,0.85)';
+          ctx.lineWidth = ln.category === 'net' ? 3 : 2;
+          ctx.stroke();
+        });
+      }
+
+      // Draw interactive anchor handles
+      if (layers.anchors && STATE.report?.calibration?.anchors_px) {
+        Object.entries(STATE.report.calibration.anchors_px).forEach(([name, uv]) => {
+          ctx.beginPath();
+          ctx.arc(uv[0], uv[1], 8, 0, Math.PI * 2);
+          ctx.fillStyle = 'rgba(250, 204, 21, 0.85)';
+          ctx.fill();
+          ctx.lineWidth = 2;
+          ctx.strokeStyle = '#ffffff';
+          ctx.stroke();
+        });
+      }
+
+      // Draw custom clicked test point call if present
+      if (customPointCall) {
+        ctx.beginPath();
+        ctx.arc(customPointCall.u, customPointCall.v, 9, 0, Math.PI * 2);
+        ctx.fillStyle = customPointCall.is_in ? '#22c55e' : '#ef4444';
+        ctx.fill();
+        ctx.strokeStyle = '#fff';
+        ctx.lineWidth = 2;
+        ctx.stroke();
+      }
+
+      drawRadar();
+    }
+
+    function drawRadar() {
+      if (!STATE) return;
+      const W = radarCanvas.width, H = radarCanvas.height;
+      rctx.fillStyle = '#1e3a5f';
+      rctx.fillRect(0, 0, W, H);
+
+      const padX = 28, padY = 30;
+      const cW = W - padX * 2, cH = H - padY * 2;
+      const spec = STATE.court_spec;
+      const toMini = (xm, ym) => [
+        padX + (xm / spec.doubles_width_m) * cW,
+        padY + (ym / spec.length_m) * cH
+      ];
+
+      // Clay fill
+      rctx.fillStyle = '#b55435';
+      rctx.fillRect(padX, padY, cW, cH);
+
+      // Court lines
+      STATE.projected_lines.forEach(ln => {
+        const [x1, y1] = toMini(ln.p1_m[0], ln.p1_m[1]);
+        const [x2, y2] = toMini(ln.p2_m[0], ln.p2_m[1]);
+        rctx.beginPath();
+        rctx.moveTo(x1, y1);
+        rctx.lineTo(x2, y2);
+        rctx.strokeStyle = ln.category === 'net' ? '#fde047' : '#ffffff';
+        rctx.lineWidth = ln.category === 'net' ? 2 : 1.3;
+        rctx.stroke();
+      });
+
+      // Ball trail up to currentFrame
+      if (layers.trail) {
+        rctx.beginPath();
+        let started = false;
+        for (let i = Math.max(0, currentFrame - 45); i <= currentFrame; i++) {
+          const f = STATE.frames[i];
+          if (f && f.ball) {
+            const [bx, by] = toMini(f.ball.xm, f.ball.ym);
+            if (!started) { rctx.moveTo(bx, by); started = true; }
+            else rctx.lineTo(bx, by);
+          }
+        }
+        rctx.strokeStyle = 'rgba(250, 204, 21, 0.85)';
+        rctx.lineWidth = 2;
+        rctx.stroke();
+      }
+
+      // Bounces
+      STATE.report.line_calling.bounces.forEach(b => {
+        const [bx, by] = toMini(b.x_m, b.y_m);
+        rctx.beginPath();
+        rctx.arc(bx, by, 5, 0, Math.PI * 2);
+        rctx.fillStyle = b.is_in ? '#22c55e' : '#ef4444';
+        rctx.fill();
+        rctx.strokeStyle = b.in_doubt_zone ? '#facc15' : '#ffffff';
+        rctx.lineWidth = 1.5;
+        rctx.stroke();
+      });
+
+      // Current frame players & ball
+      const cur = STATE.frames[currentFrame];
+      if (cur) {
+        if (cur.p1) {
+          const [px, py] = toMini(cur.p1.xm, cur.p1.ym);
+          rctx.beginPath(); rctx.arc(px, py, 6, 0, Math.PI * 2);
+          rctx.fillStyle = '#38bdf8'; rctx.fill(); rctx.strokeStyle = '#fff'; rctx.stroke();
+        }
+        if (cur.p2) {
+          const [px, py] = toMini(cur.p2.xm, cur.p2.ym);
+          rctx.beginPath(); rctx.arc(px, py, 6, 0, Math.PI * 2);
+          rctx.fillStyle = '#c084fc'; rctx.fill(); rctx.strokeStyle = '#fff'; rctx.stroke();
+        }
+        if (cur.ball) {
+          const [bx, by] = toMini(cur.ball.xm, cur.ball.ym);
+          rctx.beginPath(); rctx.arc(bx, by, 4.5, 0, Math.PI * 2);
+          rctx.fillStyle = '#fef08a'; rctx.fill();
+          document.getElementById('ballSpeedBadge').textContent = `Ball: ${cur.ball.kmh.toFixed(1)} km/h`;
+        }
+      }
+    }
+
+    function jumpToFrame(fIdx) {
+      isPlaying = false;
+      document.getElementById('playPauseBtn').textContent = '▶ Play';
+      currentFrame = Math.max(0, Math.min((STATE?.frames?.length || 1) - 1, fIdx));
+      document.getElementById('frameSlider').value = currentFrame;
+      document.getElementById('frameLabel').textContent =
+        `Frame ${String(currentFrame).padStart(3, '0')} / ${(STATE?.frames?.length || 280) - 1} (60fps)`;
+      loadFrameImage(currentFrame);
+    }
+
+    function onScrub(val) {
+      jumpToFrame(parseInt(val, 10));
+    }
+
+    function stepFrame(delta) {
+      jumpToFrame(currentFrame + delta);
+    }
+
+    function togglePlay() {
+      isPlaying = !isPlaying;
+      document.getElementById('playPauseBtn').textContent = isPlaying ? '⏸ Pause' : '▶ Play';
+    }
+
+    function toggleLayer(name) {
+      layers[name] = !layers[name];
+      const map = { virtual: 'toggleVirtualBtn', doubt: 'toggleDoubtBtn', trail: 'toggleTrailBtn', anchors: 'toggleAnchorsBtn' };
+      document.getElementById(map[name]).classList.toggle('active-toggle', layers[name]);
+      drawViewport();
+    }
+
+    async function reRunPipeline() {
+      const court_mode = document.getElementById('courtModeSelect').value;
+      const line_condition = document.getElementById('lineCondSelect').value;
+      document.getElementById('interactiveCallBox').textContent = 'Running CLEAR pipeline...';
+      const res = await fetch('/api/run', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          court_mode,
+          line_condition,
+          doubt_zone_cm: 15.0,
+          detector_mode: 'hybrid',
+          use_3frame_temporal: true,
+          use_parabolic_refinement: true
+        })
+      });
+      STATE = await res.json();
+      updateUI();
+      loadFrameImage(currentFrame);
+      document.getElementById('interactiveCallBox').textContent =
+        `Pipeline updated (${court_mode}, ${line_condition} lines). Click anywhere on the court to test IN/OUT calls.`;
+    }
+
+    // Mouse interaction on courtCanvas: drag anchor pegs OR click to judge arbitrary point
+    function getCanvasUV(evt) {
+      const rect = courtCanvas.getBoundingClientRect();
+      return [
+        ((evt.clientX - rect.left) / rect.width) * courtCanvas.width,
+        ((evt.clientY - rect.top) / rect.height) * courtCanvas.height
+      ];
+    }
+
+    courtCanvas.addEventListener('mousedown', async (evt) => {
+      if (!STATE) return;
+      const [u, v] = getCanvasUV(evt);
+      const anchors = STATE.report.calibration.anchors_px;
+      if (layers.anchors) {
+        for (const [name, pt] of Object.entries(anchors)) {
+          if (Math.hypot(u - pt[0], v - pt[1]) < 16) {
+            draggingAnchor = name;
+            return;
+          }
+        }
+      }
+      // Otherwise judge clicked court location
+      const court_mode = document.getElementById('courtModeSelect').value;
+      const res = await fetch('/api/judge-point', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ u, v, court_mode })
+      });
+      customPointCall = await res.json();
+      const sign = customPointCall.signed_margin_cm >= 0 ? '+' : '';
+      document.getElementById('interactiveCallBox').innerHTML =
+        `<strong>Clicked Point Call: ${customPointCall.call}</strong> (${sign}${customPointCall.signed_margin_cm} cm vs <code>${customPointCall.closest_line}</code>) | Court XY: (${customPointCall.x_m}m, ${customPointCall.y_m}m) | Conf: ${(customPointCall.confidence*100).toFixed(1)}%`;
+      drawViewport();
+    });
+
+    courtCanvas.addEventListener('mousemove', (evt) => {
+      if (!draggingAnchor || !STATE) return;
+      const [u, v] = getCanvasUV(evt);
+      STATE.report.calibration.anchors_px[draggingAnchor] = [u, v];
+      drawViewport();
+    });
+
+    window.addEventListener('mouseup', async () => {
+      if (!draggingAnchor || !STATE) return;
+      const movedAnchor = draggingAnchor;
+      draggingAnchor = null;
+      const court_mode = document.getElementById('courtModeSelect').value;
+      document.getElementById('interactiveCallBox').textContent = `Recalibrating homography from moved anchor (${movedAnchor})...`;
+      const res = await fetch('/api/calibrate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          anchors_px: STATE.report.calibration.anchors_px,
+          court_mode
+        })
+      });
+      STATE = await res.json();
+      updateUI();
+      loadFrameImage(currentFrame);
+      document.getElementById('interactiveCallBox').textContent = `Homography recalibrated (${movedAnchor}).`;
+    });
+
+    // Playback loop
+    setInterval(() => {
+      if (isPlaying && STATE && STATE.frames.length > 0) {
+        currentFrame = (currentFrame + 2) % STATE.frames.length;
+        document.getElementById('frameSlider').value = currentFrame;
+        document.getElementById('frameLabel').textContent =
+          `Frame ${String(currentFrame).padStart(3, '0')} / ${STATE.frames.length - 1} (60fps)`;
+        loadFrameImage(currentFrame);
+      }
+    }, 180);
+
+    loadState();
+  </script>
+</body>
+</html>

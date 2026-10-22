@@ -1,0 +1,11 @@
+# Generated for compatibility; primary workflow uses `uv sync` / `uv run`
+numpy>=1.26.0
+scipy>=1.11.0
+opencv-python>=4.9.0
+ultralytics>=8.1.0
+matplotlib>=3.8.0
+pyyaml>=6.0.1
+fastapi>=0.110.0
+uvicorn>=0.28.0
+python-multipart>=0.0.9
+pytest>=8.0.0

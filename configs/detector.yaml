@@ -1,0 +1,54 @@
+# CLEAR: Detector, Tracker, and Line Judge Configuration
+project: "CLEAR"
+surface: "clay"
+court_mode: "singles" # "singles" or "doubles"
+
+calibration:
+  # Standard ITF Court Dimensions (metres)
+  court_length_m: 23.77
+  doubles_width_m: 10.97
+  singles_width_m: 8.23
+  service_line_from_net_m: 6.40
+  net_height_center_m: 0.914
+  net_height_post_m: 1.07
+  drift_threshold_px: 6.0
+
+detector:
+  mode: "hybrid" # "yolo", "classical", or "hybrid" (YOLO + Clay HSV/Motion fallback)
+  yolo_weights: "yolov8n.pt"
+  imgsz: 640
+  ball_conf_thresh: 0.20
+  player_conf_thresh: 0.35
+  # HSV bounds for yellow/optic-green tennis ball on red/brown clay
+  ball_hsv_lower: [20, 70, 120]
+  ball_hsv_upper: [48, 255, 255]
+  min_ball_radius_px: 2
+  max_ball_radius_px: 18
+
+tracker:
+  ball:
+    process_noise: 1.5
+    measurement_noise: 2.5
+    max_coast_frames: 8
+    trail_length: 35
+  player:
+    iou_thresh: 0.25
+    max_dist_px: 120.0
+    max_coast_frames: 15
+    smoothing_alpha: 0.45
+
+judge:
+  # Ball contact patch radius on clay (~3.35 cm physical radius, ~4.0 cm with compression)
+  ball_contact_radius_cm: 3.8
+  doubt_zone_cm: 15.0
+  min_bounce_vy_px: 1.8
+  min_frames_between_bounces: 12
+
+hud:
+  draw_virtual_lines: true
+  draw_doubt_zone: true
+  draw_ball_trail: true
+  draw_player_boxes: true
+  draw_minimap: true
+  draw_scoreboard: true
+  draw_last_call_card: true

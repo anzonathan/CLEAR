@@ -1,0 +1,169 @@
+{
+  "total_frames": 280,
+  "fps": 60.0,
+  "court_mode": "singles",
+  "calibration": {
+    "method": "anchors_6",
+    "reproj_error_px": 0.0,
+    "reproj_error_cm": 1.5,
+    "anchors_px": {
+      "far_left_doubles": [
+        364.79999999999995,
+        154.8
+      ],
+      "far_right_doubles": [
+        915.1999999999999,
+        154.8
+      ],
+      "near_right_doubles": [
+        1164.8,
+        630.0
+      ],
+      "near_left_doubles": [
+        115.19999999999999,
+        630.0
+      ],
+      "net_right_sideline": [
+        1001.06,
+        318.27
+      ],
+      "net_left_sideline": [
+        278.94,
+        318.27
+      ]
+    }
+  },
+  "ball_tracking": {
+    "tracked_frames": 267,
+    "coverage_pct": 95.4,
+    "avg_speed_kmh": 86.6,
+    "max_speed_kmh": 192.4,
+    "rally_strokes": 3
+  },
+  "line_calling": {
+    "total_bounces": 4,
+    "in_calls": 3,
+    "out_calls": 1,
+    "doubt_zone_calls": 2,
+    "bounces": [
+      {
+        "frame_idx": 46,
+        "u": 511.72,
+        "v": 193.75,
+        "x_m": 3.105,
+        "y_m": 3.458,
+        "call": "IN",
+        "is_in": true,
+        "signed_margin_cm": 179.8,
+        "abs_margin_cm": 179.8,
+        "closest_line": "left_singles_sideline",
+        "in_doubt_zone": false,
+        "confidence": 0.99,
+        "speed_kmh": 24.7,
+        "court_half": "far",
+        "detector_mode": "parabolic_fit"
+      },
+      {
+        "frame_idx": 110,
+        "u": 979.37,
+        "v": 493.5,
+        "x_m": 9.593,
+        "y_m": 19.623,
+        "call": "IN",
+        "is_in": true,
+        "signed_margin_cm": 7.0,
+        "abs_margin_cm": 7.0,
+        "closest_line": "right_singles_sideline",
+        "in_doubt_zone": true,
+        "confidence": 0.988,
+        "speed_kmh": 164.4,
+        "court_half": "near",
+        "detector_mode": "parabolic_fit"
+      },
+      {
+        "frame_idx": 176,
+        "u": 772.0,
+        "v": 159.72,
+        "x_m": 8.091,
+        "y_m": 0.465,
+        "call": "IN",
+        "is_in": true,
+        "signed_margin_cm": 52.8,
+        "abs_margin_cm": 52.8,
+        "closest_line": "far_baseline",
+        "in_doubt_zone": false,
+        "confidence": 0.99,
+        "speed_kmh": 31.8,
+        "court_half": "far",
+        "detector_mode": "parabolic_fit"
+      },
+      {
+        "frame_idx": 242,
+        "u": 420.32,
+        "v": 638.15,
+        "x_m": 3.208,
+        "y_m": 23.982,
+        "call": "OUT",
+        "is_in": false,
+        "signed_margin_cm": -14.9,
+        "abs_margin_cm": 14.9,
+        "closest_line": "near_baseline",
+        "in_doubt_zone": true,
+        "confidence": 0.99,
+        "speed_kmh": 188.5,
+        "court_half": "near",
+        "detector_mode": "parabolic_fit"
+      }
+    ]
+  },
+  "players": {
+    "P1 (NEAR)": {
+      "player_id": 1,
+      "court_half": "near",
+      "distance_m": 18.97,
+      "max_speed_kmh": 32.6,
+      "zone_baseline_pct": 98.9,
+      "zone_transition_pct": 1.1,
+      "zone_net_pct": 0.0,
+      "samples": 278
+    },
+    "P2 (FAR)": {
+      "player_id": 2,
+      "court_half": "far",
+      "distance_m": 27.24,
+      "max_speed_kmh": 33.4,
+      "zone_baseline_pct": 67.6,
+      "zone_transition_pct": 27.9,
+      "zone_net_pct": 4.5,
+      "samples": 111
+    }
+  },
+  "score": {
+    "player1_name": "PLAYER 1 (NEAR)",
+    "player2_name": "PLAYER 2 (FAR)",
+    "server_id": 1,
+    "sets": [
+      0,
+      0
+    ],
+    "games": [
+      0,
+      0
+    ],
+    "points": [
+      "15",
+      "0"
+    ],
+    "score_line": "Sets 0-0 | Games 0-0 | Pts 15-0",
+    "events": [
+      {
+        "point_number": 1,
+        "winner_id": 1,
+        "reason": "Ball OUT on near court",
+        "score_after": "Sets 0-0 | Games 0-0 | Pts 15-0",
+        "frame_idx": 242
+      }
+    ]
+  },
+  "annotated_video": "/Users/nathanielmugenyi/code/Projects/CLEAR/CLEAR/results/rally1/annotated_rally.mp4"
+}

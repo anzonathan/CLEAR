@@ -1,0 +1,16 @@
+{
+  "split": "test",
+  "surface_condition": "worn_clay_lines",
+  "baseline_B1_B2_B3": {
+    "ball_f1_5px": 0.984,
+    "ball_mean_error_px": 1.01,
+    "median_bounce_error_cm": 15.08,
+    "call_agreement_pct": 100.0
+  },
+  "final_CLEAR": {
+    "ball_f1_5px": 0.984,
+    "ball_mean_error_px": 1.01,
+    "median_bounce_error_cm": 2.23,
+    "call_agreement_pct": 100.0
+  }
+}

@@ -11,6 +11,9 @@ import numpy as np
 from src.calibration.court_geometry import COURT_LINES_M, SPEC, evaluate_court_point
 from src.calibration.homography import CourtCalibrator
 
+# Half stance width in metres (left/right foot offset from mid-foot)
+_FOOT_HALF_WIDTH_M = 0.12
+
 
 def generate_synthetic_clay_rally(
     video_path: str | Path,
@@ -116,13 +119,34 @@ def generate_synthetic_clay_rally(
     for f in range(total_frames):
         frame = base_bg.copy()
 
-        # Interpolate P1 (Near) and P2 (Far) positions in court metres
-        p1_m, p2_m = _interpolate_players(f, rally_segments)
-        p1_px = calibrator.point_court_to_image(*p1_m)
-        p2_px = calibrator.point_court_to_image(*p2_m)
+        # Dual-foot positions in court metres
+        (p1_left_m, p1_right_m), (p2_left_m, p2_right_m) = _interpolate_players(f, rally_segments)
+
+        # Project all four feet to image pixels
+        p1_left_px = calibrator.point_court_to_image(*p1_left_m)
+        p1_right_px = calibrator.point_court_to_image(*p1_right_m)
+        p2_left_px = calibrator.point_court_to_image(*p2_left_m)
+        p2_right_px = calibrator.point_court_to_image(*p2_right_m)
+
+        # Mid-foot (kept for backward compatibility with existing tracker/stats)
+        p1_mid_m = (
+            0.5 * (p1_left_m[0] + p1_right_m[0]),
+            0.5 * (p1_left_m[1] + p1_right_m[1]),
+        )
+        p2_mid_m = (
+            0.5 * (p2_left_m[0] + p2_right_m[0]),
+            0.5 * (p2_left_m[1] + p2_right_m[1]),
+        )
 
         # Draw Far Player first (painter's order)
-        _draw_player_sprite(frame, p2_px, scale=0.62, kit_bgr=(215, 95, 165), shorts_bgr=(45, 35, 55))
+        _draw_player_sprite(
+            frame,
+            left_foot_px=p2_left_px,
+            right_foot_px=p2_right_px,
+            scale=0.62,
+            kit_bgr=(215, 95, 165),
+            shorts_bgr=(45, 35, 55),
+        )
 
         # Compute ball state for frame f
         ball_info = _interpolate_ball_3d(f, rally_segments, calibrator)
@@ -163,7 +187,7 @@ def generate_synthetic_clay_rally(
                 -1,
                 cv2.LINE_AA,
             )
-            # Optic yellow-green tennis ball (HSV ~ [30, 210, 245] -> BGR ~(45, 235, 245))
+            # Optic yellow-green tennis ball
             cv2.circle(
                 frame,
                 (int(round(bu)), int(round(bv))),
@@ -188,13 +212,26 @@ def generate_synthetic_clay_rally(
                     "ball_v": round(bv, 2),
                     "ball_x_m": round(bx_m, 3),
                     "ball_y_m": round(by_m, 3),
-                    "p1_xy_m": [round(p1_m[0], 3), round(p1_m[1], 3)],
-                    "p2_xy_m": [round(p2_m[0], 3), round(p2_m[1], 3)],
+                    # Dual feet (court metres)
+                    "p1_left_foot_xy_m": [round(p1_left_m[0], 3), round(p1_left_m[1], 3)],
+                    "p1_right_foot_xy_m": [round(p1_right_m[0], 3), round(p1_right_m[1], 3)],
+                    "p2_left_foot_xy_m": [round(p2_left_m[0], 3), round(p2_left_m[1], 3)],
+                    "p2_right_foot_xy_m": [round(p2_right_m[0], 3), round(p2_right_m[1], 3)],
+                    # Mid-foot kept for backward compatibility
+                    "p1_xy_m": [round(p1_mid_m[0], 3), round(p1_mid_m[1], 3)],
+                    "p2_xy_m": [round(p2_mid_m[0], 3), round(p2_mid_m[1], 3)],
                 }
             )
 
         # Draw Near Player
-        _draw_player_sprite(frame, p1_px, scale=1.05, kit_bgr=(210, 145, 30), shorts_bgr=(35, 40, 50))
+        _draw_player_sprite(
+            frame,
+            left_foot_px=p1_left_px,
+            right_foot_px=p1_right_px,
+            scale=1.05,
+            kit_bgr=(210, 145, 30),
+            shorts_bgr=(35, 40, 50),
+        )
 
         writer.write(frame)
 
@@ -283,11 +320,23 @@ def _build_clay_background(
     return bg
 
 
+def _split_feet(mid_xy_m: Tuple[float, float]) -> Tuple[Tuple[float, float], Tuple[float, float]]:
+    """Return (left_foot_xy_m, right_foot_xy_m) from a mid-foot position."""
+    x, y = mid_xy_m
+    left = (x - _FOOT_HALF_WIDTH_M, y)
+    right = (x + _FOOT_HALF_WIDTH_M, y)
+    return left, right
+
+
 def _interpolate_players(
     frame_idx: int,
     segments: List[Dict[str, object]],
-) -> Tuple[Tuple[float, float], Tuple[float, float]]:
-    # Keyframes for P1 (Near) and P2 (Far)
+) -> Tuple[
+    Tuple[Tuple[float, float], Tuple[float, float]],
+    Tuple[Tuple[float, float], Tuple[float, float]],
+]:
+    """Return ((p1_left, p1_right), (p2_left, p2_right)) in court metres."""
+    # Keyframes for mid-foot of P1 (Near) and P2 (Far)
     p1_keys = [
         (0, (6.60, 22.80)),
         (46, (5.80, 23.00)),
@@ -307,7 +356,9 @@ def _interpolate_players(
         (268, (5.60, 0.60)),
         (300, (5.60, 0.60)),
     ]
-    return _interp_path(frame_idx, p1_keys), _interp_path(frame_idx, p2_keys)
+    p1_mid = _interp_path(frame_idx, p1_keys)
+    p2_mid = _interp_path(frame_idx, p2_keys)
+    return _split_feet(p1_mid), _split_feet(p2_mid)
 
 
 def _interp_path(
@@ -369,22 +420,53 @@ def _interpolate_ball_3d(
 
 def _draw_player_sprite(
     frame: np.ndarray,
-    foot_px: Tuple[float, float],
+    left_foot_px: Tuple[float, float],
+    right_foot_px: Tuple[float, float],
     scale: float,
     kit_bgr: Tuple[int, int, int],
     shorts_bgr: Tuple[int, int, int],
 ) -> None:
-    u, v = int(round(foot_px[0])), int(round(foot_px[1]))
+    """Draw player with independent left and right foot contact points."""
+    lu, lv = float(left_foot_px[0]), float(left_foot_px[1])
+    ru, rv = float(right_foot_px[0]), float(right_foot_px[1])
+
+    # Midpoint between the two feet (used for torso / head alignment)
+    u = int(round(0.5 * (lu + ru)))
+    v = int(round(0.5 * (lv + rv)))
+
     h_tot = int(round(76 * scale))
     w_torso = int(round(20 * scale))
-
-    # Shadow under feet
-    cv2.ellipse(frame, (u, v), (int(14 * scale), int(5 * scale)), 0, 0, 360, (42, 62, 105), -1, cv2.LINE_AA)
-
-    # Legs
     leg_h = int(h_tot * 0.42)
-    cv2.line(frame, (u - int(5 * scale), v), (u - int(4 * scale), v - leg_h), (95, 120, 165), max(2, int(4 * scale)), cv2.LINE_AA)
-    cv2.line(frame, (u + int(5 * scale), v), (u + int(4 * scale), v - leg_h), (95, 120, 165), max(2, int(4 * scale)), cv2.LINE_AA)
+
+    # Shadow under both feet
+    cv2.ellipse(
+        frame,
+        (u, v),
+        (int(16 * scale), int(6 * scale)),
+        0, 0, 360,
+        (42, 62, 105),
+        -1,
+        cv2.LINE_AA,
+    )
+
+    # Left leg → left foot
+    cv2.line(
+        frame,
+        (int(round(lu)), int(round(lv))),
+        (u - int(4 * scale), v - leg_h),
+        (95, 120, 165),
+        max(2, int(4 * scale)),
+        cv2.LINE_AA,
+    )
+    # Right leg → right foot
+    cv2.line(
+        frame,
+        (int(round(ru)), int(round(rv))),
+        (u + int(4 * scale), v - leg_h),
+        (95, 120, 165),
+        max(2, int(4 * scale)),
+        cv2.LINE_AA,
+    )
 
     # Shorts
     shorts_top = v - int(h_tot * 0.54)
@@ -396,7 +478,7 @@ def _draw_player_sprite(
         -1,
     )
 
-    # Jersey / Torso
+    # Jersey / torso
     torso_top = v - int(h_tot * 0.84)
     cv2.rectangle(
         frame,
@@ -408,4 +490,11 @@ def _draw_player_sprite(
 
     # Head
     head_r = max(4, int(round(8 * scale)))
-    cv2.circle(frame, (u, torso_top - head_r), head_r, (95, 120, 165), -1, cv2.LINE_AA)
+    cv2.circle(
+        frame,
+        (u, torso_top - head_r),
+        head_r,
+        (95, 120, 165),
+        -1,
+        cv2.LINE_AA,
+    )

@@ -200,6 +200,8 @@
     }
     .bounce-card.out { border-left-color: var(--call-out); }
     .bounce-card.doubt { border-left-color: var(--gold-warn); }
+    .bounce-card.fault { border-left-color: var(--call-out); }
+    .bounce-card.no-fault { border-left-color: var(--call-in); }
     .bounce-card:hover { transform: translateY(-2px); border-color: var(--cyan-accent); }
     .call-badge {
       display: inline-block;
@@ -211,6 +213,8 @@
     .call-badge.in { background: rgba(34, 197, 94, 0.2); color: #4ade80; }
     .call-badge.out { background: rgba(239, 68, 68, 0.2); color: #f87171; }
     .call-badge.doubt-tag { background: rgba(250, 204, 21, 0.2); color: #facc15; margin-left: 6px; }
+    .call-badge.fault { background: rgba(239, 68, 68, 0.2); color: #f87171; }
+    .call-badge.no-fault { background: rgba(34, 197, 94, 0.2); color: #4ade80; }
     .radar-wrap {
       display: flex;
       justify-content: center;
@@ -269,7 +273,6 @@
   </header>
 
   <main class="layout">
-    <!-- Left Column: Video + Interactive Virtual Court Canvas + Bounce Replay Cards -->
     <div style="display: flex; flex-direction: column; gap: 16px;">
       <section class="panel">
         <div class="panel-header">
@@ -322,9 +325,16 @@
         </div>
         <div class="bounces-strip" id="bouncesContainer"></div>
       </section>
+
+      <section class="panel">
+        <div class="panel-header">
+          <span class="panel-title">Foot Fault Calls (Serve Pre-Contact)</span>
+          <span class="mono" id="faultBadge" style="color: var(--gold-warn);">0 events</span>
+        </div>
+        <div class="bounces-strip" id="faultsContainer"></div>
+      </section>
     </div>
 
-    <!-- Right Column: 2D Top-Down Court Radar + Player & Ball Telemetry -->
     <div style="display: flex; flex-direction: column; gap: 16px;">
       <section class="panel">
         <div class="panel-header">
@@ -388,10 +398,10 @@
       const slider = document.getElementById('frameSlider');
       slider.max = Math.max(0, STATE.frames.length - 1);
 
-      // Render bounce cards
+      // Bounce cards
       const bWrap = document.getElementById('bouncesContainer');
       bWrap.innerHTML = '';
-      rep.line_calling.bounces.forEach((b, idx) => {
+      (rep.line_calling?.bounces || []).forEach((b) => {
         const div = document.createElement('div');
         div.className = `bounce-card ${b.is_in ? 'in' : 'out'} ${b.in_doubt_zone ? 'doubt' : ''}`;
         div.onclick = () => jumpToFrame(b.frame_idx);
@@ -413,18 +423,54 @@
         bWrap.appendChild(div);
       });
 
-      // Render stats grid
+      // Foot-fault cards
+      const fWrap = document.getElementById('faultsContainer');
+      const faultBadge = document.getElementById('faultBadge');
+      fWrap.innerHTML = '';
+      const faults = rep.foot_faults || rep.fault_events || [];
+      const shown = faults.filter(e => e.status === 'fault' || e.status === 'no_fault');
+      const compact = [];
+      for (const e of shown) {
+        if (!compact.length || compact[compact.length - 1].status !== e.status) {
+          compact.push(e);
+        } else if (e.status === 'fault') {
+          compact[compact.length - 1] = e;
+        }
+      }
+      const nFault = shown.filter(e => e.status === 'fault').length;
+      faultBadge.textContent = `${nFault} fault(s) · ${shown.length} checks`;
+      compact.forEach((e) => {
+        const div = document.createElement('div');
+        const isFault = e.status === 'fault';
+        div.className = `bounce-card ${isFault ? 'fault' : 'no-fault'}`;
+        div.onclick = () => jumpToFrame(e.frame_idx);
+        div.innerHTML = `
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+            <div>
+              <span class="call-badge ${isFault ? 'fault' : 'no-fault'}">${isFault ? 'FOOT FAULT' : 'LEGAL SERVE'}</span>
+            </div>
+            <span class="mono" style="color:var(--text-muted);">Frame #${e.frame_idx}</span>
+          </div>
+          <div class="mono" style="font-size:0.86rem; font-weight:700;">P${e.player_id ?? '?'} · conf ${(e.confidence * 100).toFixed(0)}%</div>
+          <div style="font-size:0.76rem; color:var(--text-muted); margin-top:3px;">
+            ${e.reason}
+          </div>
+        `;
+        fWrap.appendChild(div);
+      });
+
+      // Stats grid
       const p1 = rep.players['P1 (NEAR)'] || { distance_m: 0, max_speed_kmh: 0 };
       const p2 = rep.players['P2 (FAR)'] || { distance_m: 0, max_speed_kmh: 0 };
-      const bt = rep.ball_tracking;
+      const bt = rep.ball_tracking || {};
       document.getElementById('statsGrid').innerHTML = `
         <div class="stat-box">
           <div class="stat-label">Ball Track Coverage</div>
-          <div class="stat-val" style="color:var(--tennis-yellow);">${bt.coverage_pct}%</div>
+          <div class="stat-val" style="color:var(--tennis-yellow);">${bt.coverage_pct ?? 0}%</div>
         </div>
         <div class="stat-box">
           <div class="stat-label">Peak Ball Speed</div>
-          <div class="stat-val" style="color:var(--cyan-accent);">${bt.max_speed_kmh} km/h</div>
+          <div class="stat-val" style="color:var(--cyan-accent);">${bt.max_speed_kmh ?? 0} km/h</div>
         </div>
         <div class="stat-box">
           <div class="stat-label">P1 (Near) Distance</div>
@@ -444,7 +490,6 @@
         ctx.drawImage(bgImage, 0, 0, courtCanvas.width, courtCanvas.height);
       }
 
-      // Draw interactive virtual lines overlay
       if (layers.virtual && STATE.projected_lines) {
         STATE.projected_lines.forEach(ln => {
           ctx.beginPath();
@@ -456,7 +501,6 @@
         });
       }
 
-      // Draw interactive anchor handles
       if (layers.anchors && STATE.report?.calibration?.anchors_px) {
         Object.entries(STATE.report.calibration.anchors_px).forEach(([name, uv]) => {
           ctx.beginPath();
@@ -469,7 +513,6 @@
         });
       }
 
-      // Draw custom clicked test point call if present
       if (customPointCall) {
         ctx.beginPath();
         ctx.arc(customPointCall.u, customPointCall.v, 9, 0, Math.PI * 2);
@@ -497,11 +540,9 @@
         padY + (ym / spec.length_m) * cH
       ];
 
-      // Clay fill
       rctx.fillStyle = '#b55435';
       rctx.fillRect(padX, padY, cW, cH);
 
-      // Court lines
       STATE.projected_lines.forEach(ln => {
         const [x1, y1] = toMini(ln.p1_m[0], ln.p1_m[1]);
         const [x2, y2] = toMini(ln.p2_m[0], ln.p2_m[1]);
@@ -513,7 +554,6 @@
         rctx.stroke();
       });
 
-      // Ball trail up to currentFrame
       if (layers.trail) {
         rctx.beginPath();
         let started = false;
@@ -530,8 +570,7 @@
         rctx.stroke();
       }
 
-      // Bounces
-      STATE.report.line_calling.bounces.forEach(b => {
+      (STATE.report?.line_calling?.bounces || []).forEach(b => {
         const [bx, by] = toMini(b.x_m, b.y_m);
         rctx.beginPath();
         rctx.arc(bx, by, 5, 0, Math.PI * 2);
@@ -542,7 +581,6 @@
         rctx.stroke();
       });
 
-      // Current frame players & ball
       const cur = STATE.frames[currentFrame];
       if (cur) {
         if (cur.p1) {
@@ -617,7 +655,6 @@
         `Pipeline updated (${court_mode}, ${line_condition} lines). Click anywhere on the court to test IN/OUT calls.`;
     }
 
-    // Mouse interaction on courtCanvas: drag anchor pegs OR click to judge arbitrary point
     function getCanvasUV(evt) {
       const rect = courtCanvas.getBoundingClientRect();
       return [
@@ -638,7 +675,6 @@
           }
         }
       }
-      // Otherwise judge clicked court location
       const court_mode = document.getElementById('courtModeSelect').value;
       const res = await fetch('/api/judge-point', {
         method: 'POST',
@@ -679,7 +715,6 @@
       document.getElementById('interactiveCallBox').textContent = `Homography recalibrated (${movedAnchor}).`;
     });
 
-    // Playback loop
     setInterval(() => {
       if (isPlaying && STATE && STATE.frames.length > 0) {
         currentFrame = (currentFrame + 2) % STATE.frames.length;

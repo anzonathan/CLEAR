@@ -15,6 +15,8 @@ from src.calibration.court_geometry import COURT_LINES_M, SPEC
 from src.calibration.homography import CameraDriftMonitor, CourtCalibrator
 from src.calibration.virtual_court import VirtualCourtRenderer
 from src.detect.detector import HybridTennisDetector
+from src.faults.fault_events import FaultEvent
+from src.faults.foot_faults import FootFaultJudge
 from src.judge.bounce_judge import BounceJudge
 from src.judge.hud_renderer import BroadcastHUDRenderer
 from src.score.score_engine import TennisScoreEngine
@@ -61,6 +63,9 @@ class ClearPipeline:
             calibrator=self.calibrator,
             virtual_court=self.virtual_court,
         )
+        self.foot_fault_judge = FootFaultJudge(court_mode=court_mode)
+        self.fault_events: List[FaultEvent] = []
+        self._gt_by_frame: Dict[int, dict] = {}
 
     def process_frame(
         self,
@@ -94,6 +99,8 @@ class ClearPipeline:
                 frame_idx=new_bounce.frame_idx,
             )
 
+        self._evaluate_foot_faults(frame_idx)
+
         annotated = self.hud.render(
             frame_bgr=frame_bgr,
             frame_idx=frame_idx,
@@ -108,6 +115,56 @@ class ClearPipeline:
         )
         return annotated, ball_state
 
+    def _load_gt(self, video_path: Path) -> None:
+        """Load synthetic GT if present (same stem + _gt.json, or data/demo default)."""
+        self._gt_by_frame = {}
+        candidates = [
+            video_path.with_name(video_path.stem + "_gt.json"),
+            Path("data/demo/ucu_clay_rally_gt.json"),
+        ]
+        for p in candidates:
+            if p.exists():
+                data = json.loads(p.read_text(encoding="utf-8"))
+                self._gt_by_frame = {
+                    int(f["frame_idx"]): f for f in data.get("frames", [])
+                }
+                break
+
+    def _evaluate_foot_faults(self, frame_idx: int) -> None:
+        """Call FootFaultJudge when GT marks a pre-contact serve."""
+        gt = self._gt_by_frame.get(frame_idx)
+        if not gt:
+            return
+        if not gt.get("service_motion_active") or not gt.get("pre_contact"):
+            return
+
+        server_id = gt.get("server_id")
+        if server_id is None:
+            return
+
+        if int(server_id) == 1:
+            left = gt.get("p1_left_foot_xy_m")
+            right = gt.get("p1_right_foot_xy_m")
+        else:
+            left = gt.get("p2_left_foot_xy_m")
+            right = gt.get("p2_right_foot_xy_m")
+
+        if not left or not right:
+            return
+
+        event = self.foot_fault_judge.evaluate(
+            frame_idx=frame_idx,
+            serving_end=gt["serving_end"],
+            left_foot_xy_m=(float(left[0]), float(left[1])),
+            right_foot_xy_m=(float(right[0]), float(right[1])),
+            service_motion_active=True,
+            pre_contact=True,
+            service_side=gt.get("service_side"),
+            player_id=int(server_id),
+            observation_confidence=1.0,
+        )
+        self.fault_events.append(event)
+
     def run_video(
         self,
         video_path: str | Path,
@@ -121,6 +178,9 @@ class ClearPipeline:
 
         out_path = Path(out_dir)
         out_path.mkdir(parents=True, exist_ok=True)
+
+        self._load_gt(in_path)
+        self.fault_events = []
 
         cap = cv2.VideoCapture(str(in_path))
         if not cap.isOpened():
@@ -175,6 +235,7 @@ class ClearPipeline:
         out_count = len(bounces) - in_count
         doubt_count = sum(1 for b in self.bounce_judge.bounces if b.in_doubt_zone)
         speeds = [s.speed_kmh for s in self.ball_tracker.history if s.speed_kmh > 5.0]
+        fault_dicts = [e.to_dict() for e in self.fault_events]
 
         return {
             "total_frames": total_frames,
@@ -200,6 +261,10 @@ class ClearPipeline:
                 "doubt_zone_calls": doubt_count,
                 "bounces": bounces,
             },
+            "fault_events": fault_dicts,
+            "foot_faults": [
+                e for e in fault_dicts if e.get("status") in ("fault", "no_fault")
+            ],
             "players": self.player_tracker.get_summary_stats(),
             "score": self.score_engine.to_dict(),
             "annotated_video": video_out_path,
@@ -211,7 +276,6 @@ class ClearPipeline:
 
         for ax in axes:
             ax.set_facecolor("#2b4c7e")
-            # Clay inner court fill
             rect = plt.Rectangle(
                 (0, 0),
                 SPEC.doubles_width_m,
@@ -228,13 +292,12 @@ class ClearPipeline:
                 ax.plot([p1[0], p2[0]], [p1[1], p2[1]], color=col, linewidth=lw, linestyle=ls, zorder=2)
 
             ax.set_xlim(-1.5, SPEC.doubles_width_m + 1.5)
-            ax.set_ylim(SPEC.length_m + 2.5, -2.5)  # Near court at bottom, Far court at top
+            ax.set_ylim(SPEC.length_m + 2.5, -2.5)
             ax.set_aspect("equal")
             ax.tick_params(colors="#cbd5e1", labelsize=8)
             for spine in ax.spines.values():
                 spine.set_color("#475569")
 
-        # Left subplot: Ball Trajectory & Line Calls (Hawk-Eye View)
         ax1 = axes[0]
         ax1.set_title("Ball Trajectory & Bounce Line Calls", color="#f8fafc", fontsize=11, pad=10)
         if self.ball_tracker.history:
@@ -265,7 +328,6 @@ class ClearPipeline:
                 zorder=6,
             )
 
-        # Right subplot: Player Movement Tracks & Positioning
         ax2 = axes[1]
         ax2.set_title("Player Movement & Court Coverage", color="#f8fafc", fontsize=11, pad=10)
         for pid, p in self.player_tracker.tracks.items():

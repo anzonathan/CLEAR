@@ -256,7 +256,7 @@
       <span class="brand-badge">CLEAR</span>
       <div>
         <div style="font-weight: 700; font-size: 0.95rem;">Clay-Court Line Evaluation & Automated Refereeing</div>
-        <div class="brand-sub">Single-Camera 6-Anchor Homography • 3-Frame Temporal Hybrid Tracker • UCU Capstone</div>
+        <div class="brand-sub">Single-Camera 6-Anchor Homography · Foot-Fault Overlay · UCU Capstone</div>
       </div>
     </div>
     <div class="score-banner">
@@ -313,7 +313,7 @@
             <button class="primary" onclick="reRunPipeline()">↻ Re-Run Pipeline</button>
           </div>
           <div class="hint-bar" id="interactiveCallBox">
-            Tip: Click anywhere on the clay court to test instant homography IN/OUT judgment, or drag the 6 gold anchor pegs to recalibrate.
+            Tip: Scrub early frames for LEGAL SERVE / FOOT FAULT overlay. Click court for IN/OUT. Drag gold anchors to recalibrate.
           </div>
         </div>
       </section>
@@ -386,6 +386,65 @@
       bgImage.src = `/api/frame/${fIdx}?t=${Date.now()}`;
     }
 
+    function faultForFrame(fIdx) {
+      const events = STATE?.report?.fault_events || STATE?.report?.foot_faults || [];
+      let exact = null;
+      let best = null;
+      for (const e of events) {
+        if (e.frame_idx === fIdx) exact = e;
+        if (e.frame_idx <= fIdx && (best === null || e.frame_idx > best.frame_idx)) {
+          best = e;
+        }
+      }
+      if (exact) return exact;
+      if (best && fIdx - best.frame_idx <= 2) return best;
+      return null;
+    }
+
+    function drawFaultOverlay() {
+      const ev = faultForFrame(currentFrame);
+      if (!ev || (ev.status !== 'fault' && ev.status !== 'no_fault')) return;
+
+      const isFault = ev.status === 'fault';
+      const label = isFault ? 'FOOT FAULT' : 'LEGAL SERVE';
+      const bg = isFault ? 'rgba(239, 68, 68, 0.92)' : 'rgba(34, 197, 94, 0.92)';
+      const text = `${label}  ·  P${ev.player_id ?? '?'}  ·  f${ev.frame_idx}`;
+
+      ctx.save();
+      ctx.font = 'bold 22px ui-monospace, SFMono-Regular, Menlo, monospace';
+      const padX = 16;
+      const boxH = 36;
+      const tw = ctx.measureText(text).width;
+      const boxW = tw + padX * 2;
+      const x = (courtCanvas.width - boxW) / 2;
+      const y = 18;
+      const r = 8;
+
+      ctx.fillStyle = bg;
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(x + r, y);
+      ctx.arcTo(x + boxW, y, x + boxW, y + boxH, r);
+      ctx.arcTo(x + boxW, y + boxH, x, y + boxH, r);
+      ctx.arcTo(x, y + boxH, x, y, r);
+      ctx.arcTo(x, y, x + boxW, y, r);
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+
+      ctx.fillStyle = '#ffffff';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(text, x + padX, y + boxH / 2);
+
+      ctx.font = '12px ui-monospace, SFMono-Regular, Menlo, monospace';
+      ctx.fillStyle = 'rgba(255,255,255,0.9)';
+      const reason = (ev.reason || '').slice(0, 90);
+      const rw = ctx.measureText(reason).width;
+      ctx.fillText(reason, (courtCanvas.width - rw) / 2, y + boxH + 16);
+      ctx.restore();
+    }
+
     function updateUI() {
       if (!STATE) return;
       const rep = STATE.report;
@@ -417,13 +476,13 @@
           <div class="mono" style="font-size:0.86rem; font-weight:700;">Margin: ${sign}${b.signed_margin_cm} cm</div>
           <div style="font-size:0.76rem; color:var(--text-muted); margin-top:3px;">
             Line: ${b.closest_line}<br/>
-            Court: (${b.x_m.toFixed(2)}m, ${b.y_m.toFixed(2)}m) • Conf: ${(b.confidence * 100).toFixed(0)}%
+            Court: (${b.x_m.toFixed(2)}m, ${b.y_m.toFixed(2)}m) · Conf: ${(b.confidence * 100).toFixed(0)}%
           </div>
         `;
         bWrap.appendChild(div);
       });
 
-      // Foot-fault cards
+      // Foot-fault summary cards
       const fWrap = document.getElementById('faultsContainer');
       const faultBadge = document.getElementById('faultBadge');
       fWrap.innerHTML = '';
@@ -459,7 +518,6 @@
         fWrap.appendChild(div);
       });
 
-      // Stats grid
       const p1 = rep.players['P1 (NEAR)'] || { distance_m: 0, max_speed_kmh: 0 };
       const p2 = rep.players['P2 (FAR)'] || { distance_m: 0, max_speed_kmh: 0 };
       const bt = rep.ball_tracking || {};
@@ -522,6 +580,9 @@
         ctx.lineWidth = 2;
         ctx.stroke();
       }
+
+      // Live foot-fault / legal-serve banner on the court (same role as IN/OUT overlay)
+      drawFaultOverlay();
 
       drawRadar();
     }
@@ -587,6 +648,16 @@
           const [px, py] = toMini(cur.p1.xm, cur.p1.ym);
           rctx.beginPath(); rctx.arc(px, py, 6, 0, Math.PI * 2);
           rctx.fillStyle = '#38bdf8'; rctx.fill(); rctx.strokeStyle = '#fff'; rctx.stroke();
+
+          // Ring server on radar during foot-fault evaluation
+          const ev = faultForFrame(currentFrame);
+          if (ev && (ev.status === 'fault' || ev.status === 'no_fault')) {
+            rctx.beginPath();
+            rctx.arc(px, py, 11, 0, Math.PI * 2);
+            rctx.strokeStyle = ev.status === 'fault' ? '#ef4444' : '#22c55e';
+            rctx.lineWidth = 2.5;
+            rctx.stroke();
+          }
         }
         if (cur.p2) {
           const [px, py] = toMini(cur.p2.xm, cur.p2.ym);
@@ -652,7 +723,7 @@
       updateUI();
       loadFrameImage(currentFrame);
       document.getElementById('interactiveCallBox').textContent =
-        `Pipeline updated (${court_mode}, ${line_condition} lines). Click anywhere on the court to test IN/OUT calls.`;
+        `Pipeline updated (${court_mode}, ${line_condition}). Scrub frames 0–19 for foot-fault overlay.`;
     }
 
     function getCanvasUV(evt) {

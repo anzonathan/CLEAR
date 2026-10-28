@@ -17,6 +17,7 @@ from src.calibration.virtual_court import VirtualCourtRenderer
 from src.detect.detector import HybridTennisDetector
 from src.faults.fault_events import FaultEvent
 from src.faults.foot_faults import FootFaultJudge
+from src.faults.service_faults import ServiceFaultJudge
 from src.judge.bounce_judge import BounceJudge
 from src.judge.hud_renderer import BroadcastHUDRenderer
 from src.score.score_engine import TennisScoreEngine
@@ -64,8 +65,14 @@ class ClearPipeline:
             virtual_court=self.virtual_court,
         )
         self.foot_fault_judge = FootFaultJudge(court_mode=court_mode)
+        self.service_fault_judge = ServiceFaultJudge(court_mode=court_mode)
         self.fault_events: List[FaultEvent] = []
         self._gt_by_frame: Dict[int, dict] = {}
+        # Serve windows from GT (contact/end frames + side). Used only to know WHEN a
+        # serve is happening; the bounce position judged comes from the tracker.
+        self._serves: List[dict] = []
+        self._serves_done: set[int] = set()
+        self._serving_end: str = "near"
 
     def process_frame(
         self,
@@ -98,6 +105,7 @@ class ClearPipeline:
                 court_half=new_bounce.court_half,
                 frame_idx=new_bounce.frame_idx,
             )
+            self._evaluate_service_fault(new_bounce)
 
         self._evaluate_foot_faults(frame_idx)
 
@@ -116,19 +124,70 @@ class ClearPipeline:
         return annotated, ball_state
 
     def _load_gt(self, video_path: Path) -> None:
-        """Load synthetic GT if present (same stem + _gt.json, or data/demo default)."""
+        """Load synthetic GT if present (same stem + _gt.json).
+
+        There is deliberately NO fallback to the demo GT: an unrelated uploaded
+        video must not inherit the synthetic clip's serve/fault events.
+        """
         self._gt_by_frame = {}
-        candidates = [
-            video_path.with_name(video_path.stem + "_gt.json"),
-            Path("data/demo/ucu_clay_rally_gt.json"),
+        self._serves = []
+        self._serves_done = set()
+        self._serving_end = "near"
+        gt_file = video_path.with_name(video_path.stem + "_gt.json")
+        if not gt_file.exists():
+            return
+        data = json.loads(gt_file.read_text(encoding="utf-8"))
+        self._gt_by_frame = {int(f["frame_idx"]): f for f in data.get("frames", [])}
+        serve = data.get("serve") or {}
+        self._serving_end = serve.get("serving_end") or "near"
+        self._serves = [
+            s for s in serve.get("serve_segments", []) if s.get("is_serve")
         ]
-        for p in candidates:
-            if p.exists():
-                data = json.loads(p.read_text(encoding="utf-8"))
-                self._gt_by_frame = {
-                    int(f["frame_idx"]): f for f in data.get("frames", [])
-                }
-                break
+
+    def _evaluate_service_fault(self, bounce) -> None:
+        """Judge the first tracked bounce inside each serve window against its service box."""
+        for seg in self._serves:
+            idx = int(seg["serve_idx"])
+            if idx in self._serves_done:
+                continue
+            if not (int(seg["f_contact"]) <= int(bounce.frame_idx) <= int(seg["f_end"])):
+                continue
+
+            event = self.service_fault_judge.evaluate(
+                frame_idx=int(bounce.frame_idx),
+                bounce_xy_m=(float(bounce.x_m), float(bounce.y_m)),
+                serving_end=self._serving_end,
+                service_side=seg["service_side"],
+                is_serve=True,
+                # Net-cord contact cannot be detected from video yet; the synthetic GT
+                # supplies it so lets can be rendered/tested.
+                net_cord=seg.get("net_touch_frame") is not None,
+                player_id=int(seg.get("hitter_id", 1)),
+                observation_confidence=1.0,
+                doubt_zone_cm=self.doubt_zone_cm,
+                reproj_uncertainty_cm=float(self.calibrator.reproj_error_cm),
+            )
+            self.fault_events.append(event)
+            self._serves_done.add(idx)
+            return
+
+    def _finalize_service_faults(self) -> None:
+        """Any serve with no tracked bounce is reported as uncertain, never assumed legal."""
+        for seg in self._serves:
+            idx = int(seg["serve_idx"])
+            if idx in self._serves_done:
+                continue
+            self.fault_events.append(
+                FaultEvent(
+                    fault_type="service_fault",
+                    status="uncertain",
+                    frame_idx=int(seg["f_bounce"]),
+                    reason="Serve bounce was not tracked; cannot judge service box",
+                    confidence=0.0,
+                    player_id=int(seg.get("hitter_id", 1)),
+                )
+            )
+            self._serves_done.add(idx)
 
     def _evaluate_foot_faults(self, frame_idx: int) -> None:
         """Call FootFaultJudge when GT marks a pre-contact serve."""
@@ -212,6 +271,7 @@ class ClearPipeline:
 
         cap.release()
         writer.release()
+        self._finalize_service_faults()
 
         report = self.build_report(total_frames=frame_idx, video_out_path=str(video_out_file))
         (out_path / "bounces.json").write_text(
@@ -263,7 +323,13 @@ class ClearPipeline:
             },
             "fault_events": fault_dicts,
             "foot_faults": [
-                e for e in fault_dicts if e.get("status") in ("fault", "no_fault")
+                e for e in fault_dicts
+                if e.get("fault_type") == "foot_fault"
+                and e.get("status") in ("fault", "no_fault")
+            ],
+            "service_faults": [
+                e for e in fault_dicts
+                if e.get("fault_type") in ("service_fault", "let")
             ],
             "players": self.player_tracker.get_summary_stats(),
             "score": self.score_engine.to_dict(),

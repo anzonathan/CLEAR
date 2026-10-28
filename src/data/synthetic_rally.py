@@ -4,20 +4,198 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Dict, List, Literal, Tuple
+from typing import Dict, List, Literal, Optional, Tuple
 import cv2
 import numpy as np
 
-from src.calibration.court_geometry import COURT_LINES_M, SPEC, evaluate_court_point
+from src.calibration.court_geometry import COURT_LINES_M, SPEC, evaluate_court_point, get_active_bounds
 from src.calibration.homography import CourtCalibrator
 
 # Half stance width in metres (left/right foot offset from mid-foot)
 _FOOT_HALF_WIDTH_M = 0.12
 
-# Fixed synthetic serve window (P1 Near)
-_SERVE_END_FRAME = 24          # inclusive motion window
-_SERVE_CONTACT_FRAME = 20      # contact; pre_contact is frame < this
-_SERVE_FAULT_START = 13        # first frame with a baseline step-on
+# ---------------------------------------------------------------------------
+# Serve timing (frames, RELATIVE to the first frame of a serve window).
+#
+#   0 ........ TOSS ........ CONTACT ........ BOUNCE ........ END
+#   stance     ball rises    ball leaves      ball lands      rebound over
+#                            racket (f_start)
+#
+# The ball trajectory (f_start) now begins AT contact, not at the serve start.
+# ---------------------------------------------------------------------------
+SERVE_START_FRAME = 0
+SERVE_TOSS_FRAME = 8
+SERVE_CONTACT_FRAME = 20
+SERVE_FLIGHT_FRAMES = 28
+SERVE_BOUNCE_FRAME = SERVE_CONTACT_FRAME + SERVE_FLIGHT_FRAMES   # 48
+SERVE_END_FRAME = SERVE_BOUNCE_FRAME + 13                        # 61
+SERVE_RESET_GAP_FRAMES = 20   # idle frames before a let is replayed
+
+_SERVE_END_FRAME = SERVE_END_FRAME
+_SERVE_CONTACT_FRAME = SERVE_CONTACT_FRAME
+# Frame (relative) at which the faulting foot reaches the baseline. Must be < contact.
+_SERVE_FAULT_START = 13
+
+_SERVE_START_Z_M = 2.60       # racket contact height
+_SERVE_PEAK_Z_M = 1.60        # arc bulge; keeps ball ~1.2 m over the net
+_SERVE_STANCE_Y_M = 24.30     # legal pre-contact foot depth (behind near baseline)
+_SERVE_STEP_IN_Y_M = 23.40    # where the server lands after contact (legal)
+_SERVE_FAULT_FOOT_Y_M = 23.70  # on/over near baseline
+
+# Serve Helpers
+ServeOutcome = Literal[
+    "legal",
+    "long",
+    "wide",
+    "wrong_service_box",
+    "let",
+]
+
+
+def _serve_target_box(service_side: str) -> tuple[float, float, float, float]:
+    """Return x_min, x_max, y_min, y_max for the target service box.
+
+    The server stands at the near end (y = SPEC.length_m).
+    A right/deuce-court serve targets the far-left service box.
+    A left/ad-court serve targets the far-right service box.
+    """
+    if service_side == "right":
+        mode = "service_far_left"
+    elif service_side == "left":
+        mode = "service_far_right"
+    else:
+        raise ValueError("service_side must be 'right' or 'left'")
+
+    x_min, x_max, y_min, y_max, _ = get_active_bounds(mode=mode)
+    return x_min, x_max, y_min, y_max
+
+
+def _side_sign(service_side: str) -> float:
+    return 1.0 if service_side == "right" else -1.0
+
+
+def _serve_stance_mid_x(service_side: str) -> float:
+    """Server stands ~0.9 m to the correct side of the centre mark (6.40 / 4.57)."""
+    return SPEC.center_x_m + _side_sign(service_side) * 0.915
+
+
+def _make_serve_segment(
+    service_side: str = "right",
+    outcome: ServeOutcome = "legal",
+    start_frame: int = SERVE_START_FRAME,
+    foot_fault: bool = False,
+) -> dict:
+    """Create a serve segment with a deterministic landing outcome.
+
+    `start_frame` is the first frame of the serve window (stance). The ball is
+    tossed at start_frame + SERVE_TOSS_FRAME, struck at start_frame +
+    SERVE_CONTACT_FRAME, and bounces SERVE_FLIGHT_FRAMES later.
+    """
+    x_min, x_max, y_min, y_max = _serve_target_box(service_side)
+    box_cx = 0.5 * (x_min + x_max)
+    box_cy = 0.5 * (y_min + y_max)
+
+    if outcome in ("legal", "let"):
+        bounce = (box_cx, box_cy)
+    elif outcome == "wrong_service_box":
+        # Mirror the target box across the centre service line.
+        bounce = (2.0 * SPEC.center_x_m - box_cx, box_cy)
+    elif outcome == "wide":
+        # 0.65 m outside the singles sideline on the side of the target box.
+        if service_side == "right":
+            bounce = (SPEC.alley_width_m - 0.65, box_cy)
+        else:
+            bounce = (SPEC.doubles_width_m - SPEC.alley_width_m + 0.65, box_cy)
+    elif outcome == "long":
+        # 0.60 m beyond the far service line, centred in x.
+        bounce = (box_cx, y_min - 0.60)
+    else:
+        raise ValueError(f"Unknown serve outcome: {outcome}")
+
+    start_m = (
+        SPEC.center_x_m + _side_sign(service_side) * 0.90,
+        SPEC.length_m - 0.45,
+    )
+
+    f_contact = start_frame + SERVE_CONTACT_FRAME
+    f_bounce = start_frame + SERVE_BOUNCE_FRAME
+
+    # A let is a net-cord touch followed by a landing in the correct box.
+    # Visual simplification: GT only, no net collision physics.
+    net_touch_frame = None
+    if outcome == "let":
+        t_net = (start_m[1] - SPEC.net_y_m) / (start_m[1] - bounce[1])
+        net_touch_frame = f_contact + int(round(t_net * SERVE_FLIGHT_FRAMES))
+
+    return {
+        "f_serve_start": start_frame,                       # stance / start of serve window
+        "f_toss_start": start_frame + SERVE_TOSS_FRAME,     # ball becomes visible
+        "f_contact": f_contact,
+        "f_start": f_contact,                               # ball flight begins at contact
+        "f_bounce": f_bounce,
+        "f_end": start_frame + SERVE_END_FRAME,
+        "start_m": start_m,
+        "bounce_m": bounce,
+        "end_m": (bounce[0], bounce[1] - 1.0),
+        "start_z_m": _SERVE_START_Z_M,
+        "peak_z_m": _SERVE_PEAK_Z_M,
+        "rebound_z_m": 0.80,
+        "hitter_id": 1,
+        "is_serve": True,
+        "service_side": service_side,
+        "serve_outcome": outcome,
+        "net_touch_frame": net_touch_frame,
+        "foot_fault": bool(foot_fault),       # what the generator was TOLD to do
+        "foot_fault_frame": None,             # what actually happened (measured during render)
+    }
+
+
+def _classify_serve(segment: dict) -> dict:
+    """Classify a serve using the existing court geometry."""
+    x, y = segment["bounce_m"]
+    side = segment["service_side"]
+
+    target_mode = "service_far_left" if side == "right" else "service_far_right"
+    wrong_mode = "service_far_right" if side == "right" else "service_far_left"
+
+    target_ev = evaluate_court_point(x, y, mode=target_mode)
+    wrong_ev = evaluate_court_point(x, y, mode=wrong_mode)
+
+    outcome = segment["serve_outcome"]
+
+    if outcome == "let":
+        # Ball touched the net but landed in the target box: replayed, not a fault.
+        is_legal = bool(target_ev["is_in"])
+        call = "LET" if is_legal else "FAULT"
+    elif target_ev["is_in"]:
+        is_legal = True
+        call = "IN"
+    elif wrong_ev["is_in"]:
+        is_legal = False
+        call = "WRONG_SERVICE_BOX"
+    else:
+        is_legal = False
+        call = "OUT"
+
+    return {
+        "event_type": "serve_landing",
+        "serve_idx": segment.get("serve_idx"),
+        "serve_outcome": outcome,
+        "service_side": side,
+        "target_service_box": target_mode,
+        "call": call,
+        "is_in": bool(target_ev["is_in"]),
+        "is_legal_serve": is_legal,
+        "is_service_fault": not is_legal and outcome != "let",
+        "is_let": outcome == "let",
+        "net_touch_frame": segment.get("net_touch_frame"),
+        "bounce_frame": int(segment["f_bounce"]),
+        "bounce_x_m": round(float(x), 3),
+        "bounce_y_m": round(float(y), 3),
+        "signed_margin_cm": target_ev["signed_margin_cm"],
+        "closest_line": target_ev["closest_line"],
+        "in_doubt_zone": target_ev["in_doubt_zone"],
+    }
 
 
 def generate_synthetic_clay_rally(
@@ -28,8 +206,19 @@ def generate_synthetic_clay_rally(
     height: int = 720,
     fps: float = 60.0,
     line_condition: Literal["fresh", "worn", "wiped"] = "worn",
+    serve_side: Literal["right", "left"] = "right",
+    serve_outcome: ServeOutcome = "legal",
+    foot_fault: bool = False,
+    include_rally: bool = True,
 ) -> Dict[str, object]:
-    """Create a realistic clay-court rally video with ground-truth ball/player tracks and bounces."""
+    """Create a clay-court video with ground-truth ball/player tracks, bounces and serve events.
+
+    foot_fault:    first serve is struck with the server's right foot on/over the
+                   baseline BEFORE contact. Default False so serve-landing tests
+                   are not contaminated by foot faults.
+    include_rally: append the four groundstroke segments after the serve(s).
+                   Set False for clean serve-only clips.
+    """
     out_video = Path(video_path)
     out_video.parent.mkdir(parents=True, exist_ok=True)
 
@@ -39,86 +228,140 @@ def generate_synthetic_clay_rally(
 
     base_bg = _build_clay_background(width, height, calibrator, line_condition=line_condition)
 
-    # Groundstroke rally after the serve window
-    rally_segments = [
-        {
-            "f_start": 8,
-            "f_bounce": 46,
-            "f_end": 68,
-            "start_m": (6.60, 22.80),
-            "bounce_m": (3.10, 3.40),
-            "end_m": (2.35, 1.15),
-            "peak_z_m": 2.15,
-            "rebound_z_m": 1.15,
-            "hitter_id": 1,
-        },
-        {
-            "f_start": 68,
-            "f_bounce": 110,
-            "f_end": 134,
-            "start_m": (2.35, 1.15),
-            "bounce_m": (9.59, 19.65),
-            "end_m": (9.85, 22.90),
-            "peak_z_m": 2.05,
-            "rebound_z_m": 1.10,
-            "hitter_id": 2,
-        },
-        {
-            "f_start": 134,
-            "f_bounce": 176,
-            "f_end": 198,
-            "start_m": (9.85, 22.90),
-            "bounce_m": (8.10, 0.45),
-            "end_m": (7.40, -1.65),
-            "peak_z_m": 2.35,
-            "rebound_z_m": 1.45,
-            "hitter_id": 1,
-        },
-        {
-            "f_start": 198,
-            "f_bounce": 242,
-            "f_end": 268,
-            "start_m": (7.40, -1.65),
-            "bounce_m": (3.20, 23.98),
-            "end_m": (2.60, 25.40),
-            "peak_z_m": 2.30,
-            "rebound_z_m": 0.95,
-            "hitter_id": 2,
-        },
-    ]
+    serve_scenarios: List[Tuple[str, ServeOutcome]] = [(serve_side, serve_outcome)]
 
-    total_frames = 280
+    serve_segments: List[Dict[str, object]] = []
+    serve_events: List[Dict[str, object]] = []
+    next_frame = 0
+
+    for service_side, outcome in serve_scenarios:
+        serve = _make_serve_segment(
+            service_side=service_side,
+            outcome=outcome,
+            start_frame=next_frame,
+            foot_fault=foot_fault and not serve_segments,   # first serve only
+        )
+        serve["serve_idx"] = len(serve_segments)
+        serve_segments.append(serve)
+        serve_events.append(_classify_serve(serve))
+        next_frame = int(serve["f_end"]) + 1
+
+        # A let is replayed with a legal serve after a short reset.
+        if outcome == "let":
+            next_frame += SERVE_RESET_GAP_FRAMES
+            replay = _make_serve_segment(
+                service_side=service_side,
+                outcome="legal",
+                start_frame=next_frame,
+            )
+            replay["serve_idx"] = len(serve_segments)
+            serve_segments.append(replay)
+            serve_events.append({**_classify_serve(replay), "is_let_replay": True})
+            next_frame = int(replay["f_end"]) + 1
+
+    rally_start = next_frame
+
+
+    rally_segments: List[Dict[str, object]] = []
+
+    if include_rally:
+        # The serve's post-bounce endpoint is the returner's contact point.
+        # Each subsequent shot starts at the previous shot's endpoint.
+        previous = serve_segments[-1]
+
+        if serve_outcome == "legal" or (
+            serve_outcome == "let"
+            and len(serve_segments) > 1
+        ):
+            # For a let, use the legal replay as the active serve.
+            if serve_outcome == "let":
+                previous = serve_segments[-1]
+
+            def make_groundstroke(
+                hitter_id: int,
+                start_xy: Tuple[float, float],
+                bounce_xy: Tuple[float, float],
+                f_start: int,
+                flight_frames: int = 38,
+                rebound_frames: int = 14,
+            ) -> Dict[str, object]:
+                """Create a proper ballistic shot segment: Racket Hit -> Net -> Bounce -> Rebound."""
+                f_bounce = f_start + flight_frames
+                f_end = f_bounce + rebound_frames
+
+                # Rebound endpoint where the next player will intercept it
+                bx, by = bounce_xy
+                if hitter_id == 1:
+                    # P1 hit it toward far court, bounces at bounce_xy, rebounds toward P2
+                    end_xy = (bx + (bx - start_xy[0]) * 0.2, max(1.5, by - 2.5))
+                else:
+                    # P2 hit it toward near court, bounces at bounce_xy, rebounds toward P1
+                    end_xy = (bx + (bx - start_xy[0]) * 0.2, min(SPEC.length_m - 1.5, by + 2.5))
+
+                return {
+                    "f_start": f_start,
+                    "f_contact": f_start,
+                    "f_bounce": f_bounce,
+                    "f_end": f_end,
+                    "start_m": start_xy,       # Where the racket strikes the ball
+                    "bounce_m": bounce_xy,     # Where the ball hits the clay
+                    "end_m": end_xy,           # Peak of the rebound
+                    "start_z_m": 0.90,         # Racket contact height (meters)
+                    "peak_z_m": 1.85,          # Max arc height over the net (meters)
+                    "rebound_z_m": 0.75,       # Rebound height
+                    "hitter_id": hitter_id,
+                    "is_serve": False,
+                }
+
+
+    # Authoritative list of every ball trajectory.
+    all_segments = [*serve_segments, *rally_segments]
+
+    last_end = max(int(seg["f_end"]) for seg in all_segments)
+    total_frames = last_end + 10
+    if include_rally:
+        total_frames = max(280, total_frames)
+
     fourcc = cv2.VideoWriter_fourcc(*"mp4v")
     writer = cv2.VideoWriter(str(out_video), fourcc, fps, (width, height))
 
     gt_frames: List[Dict[str, object]] = []
     gt_bounces: List[Dict[str, object]] = []
 
-    for seg in rally_segments:
+    for seg in all_segments:
         bx, by = seg["bounce_m"]
-        half: Literal["near", "far"] = "far" if by < SPEC.net_y_m else "near"
-        ev = evaluate_court_point(bx, by, mode="singles", target_half=half)
+        half = "far" if by < SPEC.net_y_m else "near"
+
+        if seg.get("is_serve"):
+            ev = serve_events[int(seg["serve_idx"])]
+        else:
+            ev = evaluate_court_point(bx, by, mode="singles", target_half=half)
+
         b_uv = calibrator.point_court_to_image(bx, by)
-        gt_bounces.append(
-            {
-                "frame_idx": seg["f_bounce"],
-                "u": round(b_uv[0], 2),
-                "v": round(b_uv[1], 2),
-                "x_m": round(bx, 3),
-                "y_m": round(by, 3),
-                "call": ev["call"],
-                "is_in": ev["is_in"],
-                "signed_margin_cm": ev["signed_margin_cm"],
-                "in_doubt_zone": ev["in_doubt_zone"],
-                "closest_line": ev["closest_line"],
-                "court_half": half,
-            }
-        )
+
+        gt_bounces.append({
+            "frame_idx": int(seg["f_bounce"]),
+            "u": round(float(b_uv[0]), 2),
+            "v": round(float(b_uv[1]), 2),
+            "x_m": round(float(bx), 3),
+            "y_m": round(float(by), 3),
+            "call": ev["call"],
+            "is_in": bool(ev["is_in"]),
+            "signed_margin_cm": ev.get("signed_margin_cm"),
+            "in_doubt_zone": ev.get("in_doubt_zone", False),
+            "closest_line": ev.get("closest_line"),
+            "court_half": half,
+            "is_serve": bool(seg.get("is_serve", False)),
+            "serve_idx": seg.get("serve_idx"),
+            "serve_outcome": seg.get("serve_outcome"),
+        })
 
     for f in range(total_frames):
         frame = base_bg.copy()
 
-        (p1_left_m, p1_right_m), (p2_left_m, p2_right_m) = _interpolate_players(f, rally_segments)
+        (p1_left_m, p1_right_m), (p2_left_m, p2_right_m) = _interpolate_players(
+            f, serve_segments, rally_start, rally_segments
+        )
 
         p1_left_px = calibrator.point_court_to_image(*p1_left_m)
         p1_right_px = calibrator.point_court_to_image(*p1_right_m)
@@ -135,8 +378,17 @@ def generate_synthetic_clay_rally(
         )
 
         # Serve context for this frame
-        in_serve = f <= _SERVE_END_FRAME
-        pre_contact = f < _SERVE_CONTACT_FRAME
+        active_serve = _serve_window(f, serve_segments)
+        in_serve = active_serve is not None
+        pre_contact = in_serve and f < int(active_serve["f_contact"])
+
+        # Measured foot-fault GT: first pre-contact frame with a foot on/over the baseline.
+        if (
+            pre_contact
+            and active_serve["foot_fault_frame"] is None
+            and min(p1_left_m[1], p1_right_m[1]) <= SPEC.length_m
+        ):
+            active_serve["foot_fault_frame"] = f
 
         _draw_player_sprite(
             frame,
@@ -147,7 +399,7 @@ def generate_synthetic_clay_rally(
             shorts_bgr=(45, 35, 55),
         )
 
-        ball_info = _interpolate_ball_3d(f, rally_segments, calibrator)
+        ball_info = _interpolate_ball_3d(f, all_segments, calibrator)
 
         for gb in gt_bounces:
             dt_b = f - int(gb["frame_idx"])
@@ -166,6 +418,27 @@ def generate_synthetic_clay_rally(
                 )
                 alpha_d = max(0.05, 0.38 * (1.0 - dt_b / 15.0))
                 frame = cv2.addWeighted(dust_layer, alpha_d, frame, 1.0 - alpha_d, 0)
+
+        frame_gt: Dict[str, object] = {
+            "frame_idx": f,
+            "ball_u": None,
+            "ball_v": None,
+            "ball_x_m": None,
+            "ball_y_m": None,
+            "p1_left_foot_xy_m": [round(p1_left_m[0], 3), round(p1_left_m[1], 3)],
+            "p1_right_foot_xy_m": [round(p1_right_m[0], 3), round(p1_right_m[1], 3)],
+            "p2_left_foot_xy_m": [round(p2_left_m[0], 3), round(p2_left_m[1], 3)],
+            "p2_right_foot_xy_m": [round(p2_right_m[0], 3), round(p2_right_m[1], 3)],
+            "p1_xy_m": [round(p1_mid_m[0], 3), round(p1_mid_m[1], 3)],
+            "p2_xy_m": [round(p2_mid_m[0], 3), round(p2_mid_m[1], 3)],
+            # Serve context
+            "server_id": 1 if in_serve else None,
+            "serving_end": "near" if in_serve else None,
+            "service_side": active_serve["service_side"] if in_serve else None,
+            "service_motion_active": in_serve,
+            "pre_contact": bool(pre_contact),
+            "serve_idx": active_serve["serve_idx"] if in_serve else None,
+        }
 
         if ball_info is not None:
             bu, bv, shadow_u, shadow_v, radius_px, bx_m, by_m = ball_info
@@ -194,50 +467,14 @@ def generate_synthetic_clay_rally(
                 -1,
                 cv2.LINE_AA,
             )
+            frame_gt.update(
+                ball_u=round(bu, 2),
+                ball_v=round(bv, 2),
+                ball_x_m=round(bx_m, 3),
+                ball_y_m=round(by_m, 3),
+            )
 
-            gt_frames.append(
-                {
-                    "frame_idx": f,
-                    "ball_u": round(bu, 2),
-                    "ball_v": round(bv, 2),
-                    "ball_x_m": round(bx_m, 3),
-                    "ball_y_m": round(by_m, 3),
-                    "p1_left_foot_xy_m": [round(p1_left_m[0], 3), round(p1_left_m[1], 3)],
-                    "p1_right_foot_xy_m": [round(p1_right_m[0], 3), round(p1_right_m[1], 3)],
-                    "p2_left_foot_xy_m": [round(p2_left_m[0], 3), round(p2_left_m[1], 3)],
-                    "p2_right_foot_xy_m": [round(p2_right_m[0], 3), round(p2_right_m[1], 3)],
-                    "p1_xy_m": [round(p1_mid_m[0], 3), round(p1_mid_m[1], 3)],
-                    "p2_xy_m": [round(p2_mid_m[0], 3), round(p2_mid_m[1], 3)],
-                    # Foot-fault / serve context
-                    "server_id": 1 if in_serve else None,
-                    "serving_end": "near" if in_serve else None,
-                    "service_side": "right" if in_serve else None,
-                    "service_motion_active": in_serve,
-                    "pre_contact": pre_contact if in_serve else False,
-                }
-            )
-        else:
-            # Frames with no ball still need serve GT for early serve window
-            gt_frames.append(
-                {
-                    "frame_idx": f,
-                    "ball_u": None,
-                    "ball_v": None,
-                    "ball_x_m": None,
-                    "ball_y_m": None,
-                    "p1_left_foot_xy_m": [round(p1_left_m[0], 3), round(p1_left_m[1], 3)],
-                    "p1_right_foot_xy_m": [round(p1_right_m[0], 3), round(p1_right_m[1], 3)],
-                    "p2_left_foot_xy_m": [round(p2_left_m[0], 3), round(p2_left_m[1], 3)],
-                    "p2_right_foot_xy_m": [round(p2_right_m[0], 3), round(p2_right_m[1], 3)],
-                    "p1_xy_m": [round(p1_mid_m[0], 3), round(p1_mid_m[1], 3)],
-                    "p2_xy_m": [round(p2_mid_m[0], 3), round(p2_mid_m[1], 3)],
-                    "server_id": 1 if in_serve else None,
-                    "serving_end": "near" if in_serve else None,
-                    "service_side": "right" if in_serve else None,
-                    "service_motion_active": in_serve,
-                    "pre_contact": pre_contact if in_serve else False,
-                }
-            )
+        gt_frames.append(frame_gt)
 
         _draw_player_sprite(
             frame,
@@ -252,6 +489,13 @@ def generate_synthetic_clay_rally(
 
     writer.release()
 
+    # Fold the measured foot-fault frame back into each serve event.
+    for seg, ev in zip(serve_segments, serve_events):
+        ev["foot_fault_frame"] = seg["foot_fault_frame"]
+        ev["is_foot_fault"] = seg["foot_fault_frame"] is not None
+        ev["contact_frame"] = int(seg["f_contact"])
+
+    first = serve_segments[0]
     gt_payload = {
         "video_path": str(out_video),
         "width": width,
@@ -261,13 +505,22 @@ def generate_synthetic_clay_rally(
         "anchors_px": {k: list(v) for k, v in calibrator.anchors_px.items()},
         "bounces": gt_bounces,
         "frames": gt_frames,
+        # Top-level fields describe the FIRST serve (backwards compatible);
+        # per-serve detail lives in serve_events / serve_segments.
         "serve": {
             "server_id": 1,
             "serving_end": "near",
-            "service_side": "right",
-            "motion_end_frame": _SERVE_END_FRAME,
-            "contact_frame": _SERVE_CONTACT_FRAME,
-            "fault_start_frame": _SERVE_FAULT_START,
+            "service_side": first["service_side"],
+            "motion_start_frame": int(first["f_serve_start"]),
+            "motion_end_frame": int(first["f_end"]),
+            "contact_frame": int(first["f_contact"]),
+            "fault_start_frame": first["foot_fault_frame"],
+            "is_foot_fault": first["foot_fault_frame"] is not None,
+            "serve_events": serve_events,
+            "serve_segments": serve_segments,
+            "rally_start_frame": rally_start,
+            "rally_segment_count": len(rally_segments),
+            "total_segment_count": len(all_segments),
         },
     }
     if gt_json_path is not None:
@@ -343,78 +596,133 @@ def _split_feet(mid_xy_m: Tuple[float, float]) -> Tuple[Tuple[float, float], Tup
     return left, right
 
 
-def _serve_p1_feet(frame_idx: int) -> Tuple[Tuple[float, float], Tuple[float, float]]:
-    """P1 Near serve stance: legal then step onto baseline.
+def _serve_window(
+    frame_idx: int,
+    serve_segments: List[Dict[str, object]],
+) -> Optional[Dict[str, object]]:
+    """Return the serve whose window (stance .. end of rebound) contains this frame."""
+    for seg in serve_segments:
+        if int(seg["f_serve_start"]) <= frame_idx <= int(seg["f_end"]):
+            return seg
+    return None
 
-    Near baseline is y = 23.77. Legal feet need y > ~23.80.
-    Fault: right foot steps to y <= 23.77.
+
+def _serve_p1_feet(
+    local: int,
+    service_side: str,
+    foot_fault: bool,
+) -> Tuple[Tuple[float, float], Tuple[float, float]]:
+    """P1 near-end serve stance. `local` = frames since the serve window started.
+
+    Near baseline is y = SPEC.length_m (23.77). A foot is legal while y > 23.77
+    BEFORE contact. After contact the server steps into the court, which is legal.
+
+    legal : both feet behind the baseline until contact, then step in.
+    fault : right foot reaches y = 23.70 at `_SERVE_FAULT_START` (< contact),
+            i.e. a genuine pre-contact foot fault.
     """
-    # Stance x (right side of centre for service_side="right")
-    mid_x = 6.40
+    mid_x = _serve_stance_mid_x(service_side)
+    c = SERVE_CONTACT_FRAME
+    f0 = _SERVE_FAULT_START
 
-    if frame_idx < _SERVE_FAULT_START:
-        # Legal: both feet clearly behind baseline
-        mid_y = 24.25
-        left = (mid_x - _FOOT_HALF_WIDTH_M, mid_y)
-        right = (mid_x + _FOOT_HALF_WIDTH_M, mid_y + 0.05)
+    # Right foot
+    if foot_fault:
+        r_t = [0, f0 - 6, f0, c + 8, SERVE_END_FRAME]
+        r_y = [_SERVE_STANCE_Y_M, _SERVE_STANCE_Y_M, _SERVE_FAULT_FOOT_Y_M,
+               _SERVE_STEP_IN_Y_M, _SERVE_STEP_IN_Y_M]
     else:
-        # Fault: right foot on/over baseline, left still legal
-        left = (mid_x - _FOOT_HALF_WIDTH_M, 24.15)
-        right = (mid_x + _FOOT_HALF_WIDTH_M, 23.70)  # on/over near baseline
+        r_t = [0, c, c + 8, SERVE_END_FRAME]
+        r_y = [_SERVE_STANCE_Y_M, _SERVE_STANCE_Y_M, _SERVE_STEP_IN_Y_M, _SERVE_STEP_IN_Y_M]
+    right_y = float(np.interp(local, r_t, r_y))
 
+    # Left foot: always legal before contact, then follows through.
+    left_y = float(np.interp(
+        local,
+        [0, c, c + 10, SERVE_END_FRAME],
+        [24.25, 24.25, _SERVE_STEP_IN_Y_M, _SERVE_STEP_IN_Y_M],
+    ))
+
+    left = (mid_x - _FOOT_HALF_WIDTH_M, left_y)
+    right = (mid_x + _FOOT_HALF_WIDTH_M, right_y)
     return left, right
+
+
+def _serve_feet_at(seg: Dict[str, object], frame_idx: int):
+    local = frame_idx - int(seg["f_serve_start"])
+    return _serve_p1_feet(local, str(seg["service_side"]), bool(seg["foot_fault"]))
+
+
+def _smoothstep(t: float) -> float:
+    t = min(1.0, max(0.0, t))
+    return t * t * (3.0 - 2.0 * t)
+
 
 
 def _interpolate_players(
     frame_idx: int,
-    segments: List[Dict[str, object]],
+    serve_segments: List[Dict[str, object]],
+    rally_start: int,
+    rally_segments: Optional[List[Dict[str, object]]] = None,
 ) -> Tuple[
     Tuple[Tuple[float, float], Tuple[float, float]],
     Tuple[Tuple[float, float], Tuple[float, float]],
 ]:
-    """Return ((p1_left, p1_right), (p2_left, p2_right)) in court metres."""
-    # P1: use dedicated serve feet during serve window
-    if frame_idx <= _SERVE_END_FRAME:
-        p1_left, p1_right = _serve_p1_feet(frame_idx)
-    else:
-        p1_keys = [
-            (25, (6.40, 24.00)),
-            (46, (5.80, 23.00)),
-            (110, (8.30, 23.30)),
-            (134, (9.85, 22.90)),
-            (198, (6.40, 22.50)),
-            (268, (4.20, 23.20)),
-            (300, (4.20, 23.20)),
-        ]
-        p1_mid = _interp_path(frame_idx, p1_keys)
-        p1_left, p1_right = _split_feet(p1_mid)
+    """Interpolate players so they arrive at the ball strike location precisely at f_contact."""
+    rally_segments = rally_segments or []
 
-    p2_keys = [
-        (0, (4.50, 1.00)),
-        (46, (2.30, 0.90)),
-        (68, (2.35, 1.15)),
-        (134, (5.50, -0.40)),
-        (176, (6.40, -1.45)),
-        (198, (7.40, -1.65)),
-        (268, (5.60, 0.60)),
-        (300, (5.60, 0.60)),
-    ]
-    p2_mid = _interp_path(frame_idx, p2_keys)
-    p2_left, p2_right = _split_feet(p2_mid)
+    # Preserve P1's serve stance during serves
+    active = _serve_window(frame_idx, serve_segments)
+    if active is not None:
+        p1_left, p1_right = _serve_feet_at(active, frame_idx)
+    else:
+        # Build precise movement keys for P1 during the rally
+        p1_keys = [(rally_start, (6.40, SPEC.length_m - 0.8))]
+        for i, seg in enumerate(rally_segments):
+            if int(seg["hitter_id"]) == 1:
+                # P1 hits this shot. P1 should move to the PREVIOUS shot's bounce 
+                # (where the ball arrives on P1's side) to hit it.
+                if i > 0:
+                    prev_bounce = rally_segments[i - 1]["bounce_m"]
+                    # Arrive at the ball 8 frames before contact to plant stance
+                    arrival_frame = int(seg["f_contact"]) - 8
+                    p1_keys.append((arrival_frame, (float(prev_bounce[0]), float(prev_bounce[1]))))
+                
+                # Plant/hit position
+                x, y = seg["start_m"]
+                p1_keys.append((int(seg["f_contact"]), (float(x), float(y))))
+
+        p1_keys.sort(key=lambda item: item[0])
+        p1_left, p1_right = _split_feet(_interp_path(frame_idx, p1_keys))
+
+    # Build precise movement keys for P2 during the rally
+    p2_keys = [(0, (4.50, 1.00))]
+    for seg in rally_segments:
+        if int(seg["hitter_id"]) == 2:
+            # P2 hits this shot. P2 moves to the incoming ball bounce on the far side.
+            bounce_xy = seg["bounce_m"] # Or previous shot's end
+            arrival_frame = int(seg["f_contact"]) - 8
+            p2_keys.append((arrival_frame, (float(bounce_xy[0]), float(bounce_xy[1]) - 0.5)))
+            
+            x, y = seg["start_m"]
+            p2_keys.append((int(seg["f_contact"]), (float(x), float(y))))
+
+    p2_keys.sort(key=lambda item: item[0])
+    p2_left, p2_right = _split_feet(_interp_path(frame_idx, p2_keys))
 
     return (p1_left, p1_right), (p2_left, p2_right)
-
 
 def _interp_path(
     frame_idx: int,
     keys: List[Tuple[int, Tuple[float, float]]],
 ) -> Tuple[float, float]:
+    """Smoothstep interpolation through keyframes; clamps before the first / after the last."""
+    if frame_idx <= keys[0][0]:
+        return keys[0][1]
     for i in range(len(keys) - 1):
         f0, p0 = keys[i]
         f1, p1 = keys[i + 1]
         if f0 <= frame_idx <= f1:
-            t = (frame_idx - f0) / max(1, f1 - f0)
-            s = t * t * (3.0 - 2.0 * t)
+            s = _smoothstep((frame_idx - f0) / max(1, f1 - f0))
             return (p0[0] + s * (p1[0] - p0[0]), p0[1] + s * (p1[1] - p0[1]))
     return keys[-1][1]
 
@@ -428,7 +736,8 @@ def _interpolate_ball_3d(
         f_start = int(seg["f_start"])
         f_bounce = int(seg["f_bounce"])
         f_end = int(seg["f_end"])
-        if not (f_start <= frame_idx <= f_end):
+        f_first = int(seg.get("f_toss_start", f_start))   # serves show the toss
+        if not (f_first <= frame_idx <= f_end):
             continue
 
         s_m = seg["start_m"]
@@ -436,12 +745,18 @@ def _interpolate_ball_3d(
         e_m = seg["end_m"]
         peak_z = float(seg["peak_z_m"])
         reb_z = float(seg["rebound_z_m"])
+        z0 = float(seg.get("start_z_m", 0.95))
 
-        if frame_idx <= f_bounce:
+        if frame_idx < f_start:
+            # Toss: ball rises vertically from the hand to the contact point.
+            u = (frame_idx - f_first) / max(1, f_start - f_first)
+            xm, ym = s_m[0], s_m[1]
+            zm = 1.0 + (z0 - 1.0) * float(np.sin(0.5 * np.pi * u))
+        elif frame_idx <= f_bounce:
             t = (frame_idx - f_start) / max(1, f_bounce - f_start)
             xm = s_m[0] + t * (b_m[0] - s_m[0])
             ym = s_m[1] + t * (b_m[1] - s_m[1])
-            zm = max(0.0, 4.0 * peak_z * t * (1.0 - t) + 0.95 * (1.0 - t) * (1.0 - t))
+            zm = max(0.0, 4.0 * peak_z * t * (1.0 - t) + z0 * (1.0 - t) * (1.0 - t))
         else:
             t = (frame_idx - f_bounce) / max(1, f_end - f_bounce)
             xm = b_m[0] + t * (e_m[0] - b_m[0])

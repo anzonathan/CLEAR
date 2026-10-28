@@ -1,0 +1,14 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.DS_Store
+
+# Runtime field data: never commit camera tokens, snapshots or session logs.
+data/cameras.json
+data/cameras/
+data/sessions/
+data/uploaded_rally.mp4
+models/*.pt

@@ -1,0 +1,11 @@
+# CPU-only override: docker compose -f docker-compose.yml -f docker-compose.cpu.yml up -d
+services:
+  clear-field:
+    environment:
+      CLEAR_DEVICE: cpu
+      CLEAR_YOLO_IMGSZ: ${CLEAR_YOLO_IMGSZ:-480}
+      CLEAR_FIELD_TARGET_FPS: ${CLEAR_FIELD_TARGET_FPS:-8}
+    deploy:
+      resources:
+        reservations:
+          devices: !reset []

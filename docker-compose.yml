@@ -1,0 +1,43 @@
+services:
+  clear-field:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    shm_size: 1gb
+    environment:
+      CLEAR_DATA_DIR: /data
+      CLEAR_RESULTS_DIR: /data/results
+      CLEAR_CALIB_PATH: /data/calib/session.json
+      CLEAR_YOLO_WEIGHTS: /app/models/yolov8n.pt
+      CLEAR_DEVICE: ${CLEAR_DEVICE:-cuda}
+      CLEAR_YOLO_IMGSZ: ${CLEAR_YOLO_IMGSZ:-640}
+      CLEAR_FIELD_TARGET_FPS: ${CLEAR_FIELD_TARGET_FPS:-15}
+      CLEAR_FIELD_JPEG_QUALITY: ${CLEAR_FIELD_JPEG_QUALITY:-72}
+      CLEAR_FIELD_MAX_WIDTH: ${CLEAR_FIELD_MAX_WIDTH:-960}
+      CLEAR_DETECTOR_MODE: ${CLEAR_DETECTOR_MODE:-hybrid}
+      CLEAR_COURT_SEG_WEIGHTS: ${CLEAR_COURT_SEG_WEIGHTS:-}
+      CLEAR_FIELD_PASSWORD: ${CLEAR_FIELD_PASSWORD:-}
+      NVIDIA_DRIVER_CAPABILITIES: compute,utility
+    volumes:
+      - clear-data:/data
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=4)"
+      interval: 30s
+      timeout: 6s
+      retries: 3
+      start_period: 25s
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+volumes:
+  clear-data:

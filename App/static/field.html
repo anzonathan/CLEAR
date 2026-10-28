@@ -1,0 +1,545 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>CLEAR Field | Live Court Detection</title>
+<style>
+  :root{
+    --bg:#090d14; --panel:#101722; --panel-2:#141e2c; --line:#233247;
+    --text:#f4f7fb; --muted:#8fa2ba; --dim:#60718a;
+    --clay:#d0643c; --clay-soft:#f08a62; --ball:#d9f99d;
+    --cyan:#38bdf8; --racket:#c084fc; --ok:#34d399; --warn:#fbbf24; --bad:#f87171;
+    --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%}
+  body{margin:0;background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;overflow:hidden}
+  button,select,input{font:inherit}
+  button{cursor:pointer}
+  .app{display:flex;flex-direction:column;height:100vh;min-height:0}
+
+  header{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:12px 18px;border-bottom:1px solid var(--line);background:#0c121b;flex:0 0 auto}
+  .brand{display:flex;align-items:center;gap:12px;min-width:0}
+  .badge{background:var(--clay);color:#fff;font-weight:800;font-size:12px;letter-spacing:.14em;padding:6px 9px;border-radius:5px}
+  .brand h1{font-size:15px;margin:0;font-weight:700;letter-spacing:.01em;white-space:nowrap}
+  .brand p{margin:2px 0 0;font-size:11px;color:var(--muted);white-space:nowrap}
+  .head-right{display:flex;align-items:center;gap:10px}
+  .nav-link{color:var(--muted);text-decoration:none;font-size:12px;border:1px solid var(--line);padding:7px 10px;border-radius:6px}
+  .nav-link:hover{color:var(--text);border-color:var(--clay)}
+  .status-pill{display:flex;align-items:center;gap:7px;font-size:12px;color:var(--muted);border:1px solid var(--line);border-radius:999px;padding:6px 10px;font-family:var(--mono)}
+  .dot{width:7px;height:7px;border-radius:50%;background:var(--dim)}
+  .dot.live{background:var(--ok);box-shadow:0 0 0 4px rgba(52,211,153,.12)}
+  .dot.warn{background:var(--warn)}
+
+  main{display:grid;grid-template-columns:292px minmax(0,1fr) 318px;gap:12px;padding:12px;flex:1 1 auto;min-height:0}
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:10px;display:flex;flex-direction:column;min-height:0;overflow:hidden}
+  .panel-head{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:11px 12px;border-bottom:1px solid var(--line);flex:0 0 auto}
+  .panel-title{font-size:11px;font-weight:800;letter-spacing:.14em;color:var(--muted)}
+  .panel-body{padding:10px;overflow:auto;min-height:0}
+
+  .btn{border:1px solid var(--line);background:var(--panel-2);color:var(--text);padding:8px 10px;border-radius:6px;font-size:12px;font-weight:600;display:inline-flex;align-items:center;justify-content:center;gap:6px;transition:.15s}
+  .btn:hover{border-color:var(--clay);background:#182333}
+  .btn.primary{background:var(--clay);border-color:var(--clay);color:#fff}
+  .btn.primary:hover{background:var(--clay-soft);border-color:var(--clay-soft)}
+  .btn.ghost{background:transparent}
+  .btn.danger:hover{border-color:var(--bad);color:var(--bad)}
+  .btn.sm{padding:5px 8px;font-size:11px}
+  .btn:disabled{opacity:.45;cursor:not-allowed}
+  .btn.wide{width:100%}
+
+  .camera-list{display:flex;flex-direction:column;gap:8px;padding:10px}
+  .camera-card{border:1px solid var(--line);background:#0d1520;border-radius:8px;padding:10px;position:relative;transition:.15s}
+  .camera-card:hover{border-color:#31455f}
+  .camera-card.active{border-color:var(--clay);box-shadow:inset 3px 0 0 var(--clay)}
+  .cam-top{display:flex;align-items:flex-start;justify-content:space-between;gap:8px}
+  .cam-name{font-size:13px;font-weight:700;line-height:1.25;word-break:break-word}
+  .cam-meta{font-size:10px;color:var(--muted);font-family:var(--mono);margin-top:4px;display:flex;gap:7px;flex-wrap:wrap}
+  .pill{font-size:9px;letter-spacing:.08em;text-transform:uppercase;font-weight:800;padding:3px 5px;border-radius:3px;background:#1b2838;color:var(--muted);border:1px solid #283a50}
+  .pill.active{color:var(--clay-soft);border-color:rgba(208,100,60,.5);background:rgba(208,100,60,.1)}
+  .pill.online{color:var(--ok);border-color:rgba(52,211,153,.4);background:rgba(52,211,153,.08)}
+  .pill.offline{color:var(--muted)}
+  .cam-actions{display:flex;gap:6px;margin-top:9px;flex-wrap:wrap}
+  .empty{padding:22px 14px;text-align:center;color:var(--muted);font-size:12px;line-height:1.5}
+  .empty strong{display:block;color:var(--text);font-size:13px;margin-bottom:4px}
+
+  .stage-wrap{position:relative;display:flex;flex-direction:column;min-height:0}
+  .stage-head{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 12px;border-bottom:1px solid var(--line);flex:0 0 auto}
+  .stage-title{font-size:13px;font-weight:700;display:flex;align-items:center;gap:8px;min-width:0}
+  .stage-title span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .stage-body{flex:1 1 auto;min-height:0;background:#05080d;display:grid;place-items:center;position:relative;padding:10px}
+  #viewCanvas{max-width:100%;max-height:100%;width:auto;height:auto;display:block;border-radius:4px;background:#05080d}
+  .no-feed{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;gap:8px;color:var(--muted);padding:24px;pointer-events:none}
+  .no-feed strong{color:var(--text);font-size:16px}
+  .no-feed p{max-width:360px;font-size:12px;line-height:1.5;margin:0}
+  .no-feed.hide{display:none}
+  .scanline{width:54px;height:38px;border:1px solid #2a3d55;border-radius:5px;position:relative;overflow:hidden;margin-bottom:4px}
+  .scanline:before{content:"";position:absolute;left:0;right:0;height:1px;background:var(--clay);top:0;animation:scan 2.2s linear infinite;box-shadow:0 0 10px var(--clay)}
+  @keyframes scan{0%{top:0}100%{top:100%}}
+
+  .stage-foot{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:9px 12px;border-top:1px solid var(--line);flex:0 0 auto;flex-wrap:wrap}
+  .toggles{display:flex;gap:6px;flex-wrap:wrap}
+  .toggle{border:1px solid var(--line);background:#0d1520;color:var(--muted);border-radius:5px;padding:5px 8px;font-size:11px;font-weight:700;display:inline-flex;align-items:center;gap:5px}
+  .toggle .sw{width:7px;height:7px;border-radius:2px;background:var(--dim)}
+  .toggle[data-on="true"]{color:var(--text);border-color:#39506c;background:#162235}
+  .toggle[data-overlay="person"] .sw{background:var(--cyan)}
+  .toggle[data-overlay="racket"] .sw{background:var(--racket)}
+  .toggle[data-overlay="ball"] .sw{background:var(--ball)}
+  .toggle[data-overlay="court"] .sw{background:#e2e8f0}
+
+  .stat-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+  .stat{background:#0d1520;border:1px solid var(--line);border-radius:7px;padding:9px}
+  .stat label{display:block;font-size:9px;color:var(--dim);letter-spacing:.1em;text-transform:uppercase;font-weight:800}
+  .stat b{display:block;margin-top:4px;font-family:var(--mono);font-size:15px;font-weight:700;color:var(--text);word-break:break-word}
+  .stat b.cyan{color:var(--cyan)} .stat b.racket{color:var(--racket)} .stat b.ball{color:var(--ball)}
+  .section{padding:10px 0;border-bottom:1px solid var(--line)}
+  .section:last-child{border-bottom:0}
+  .section h3{font-size:10px;letter-spacing:.13em;text-transform:uppercase;color:var(--muted);margin:0 0 8px}
+  .row{display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:12px;color:var(--muted);margin:7px 0}
+  .row b{color:var(--text);font-family:var(--mono);font-size:11px;text-align:right}
+  .row select{background:#0d1520;color:var(--text);border:1px solid var(--line);border-radius:5px;padding:5px 6px;font-size:11px;max-width:150px}
+  .slider-row{display:grid;grid-template-columns:54px 1fr 30px;align-items:center;gap:7px;margin:6px 0;font-size:11px;color:var(--muted)}
+  input[type=range]{accent-color:var(--clay);width:100%}
+  .mono{font-family:var(--mono)}
+  .events{font-family:var(--mono);font-size:10px;color:var(--muted);line-height:1.55;max-height:110px;overflow:auto;background:#0a111a;border:1px solid var(--line);border-radius:6px;padding:7px}
+  .events div{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
+  .modal-backdrop{position:fixed;inset:0;background:rgba(2,6,12,.82);backdrop-filter:blur(4px);display:none;align-items:center;justify-content:center;padding:18px;z-index:40}
+  .modal-backdrop.open{display:flex}
+  .modal{width:min(96vw,760px);max-height:92vh;overflow:auto;background:var(--panel);border:1px solid #2b3d55;border-radius:10px;box-shadow:0 30px 80px rgba(0,0,0,.5)}
+  .modal.small{width:min(96vw,430px)}
+  .modal-head{display:flex;align-items:center;justify-content:space-between;padding:13px 15px;border-bottom:1px solid var(--line)}
+  .modal-head h2{font-size:14px;margin:0}
+  .modal-body{padding:15px}
+  .modal-foot{display:flex;justify-content:flex-end;gap:8px;padding:12px 15px;border-top:1px solid var(--line)}
+  .field{margin-bottom:12px}
+  .field label{display:block;font-size:11px;color:var(--muted);margin-bottom:5px}
+  .field input,.field select{width:100%;padding:9px 10px;border-radius:6px;border:1px solid var(--line);background:#0b121c;color:var(--text);font-size:13px;outline:none}
+  .field input:focus,.field select:focus{border-color:var(--clay)}
+  .hint{font-size:11px;color:var(--dim);line-height:1.5;margin:0 0 10px}
+  .calib-stage{background:#05080d;border:1px solid var(--line);border-radius:7px;overflow:hidden;margin-bottom:10px;display:grid;place-items:center;min-height:200px}
+  #calibCanvas{max-width:100%;max-height:56vh;display:block;cursor:crosshair}
+  .calib-tabs{display:flex;gap:6px;margin-bottom:10px;flex-wrap:wrap}
+  .calib-tab{flex:1;min-width:90px;border:1px solid var(--line);background:#0d1520;color:var(--muted);border-radius:5px;padding:7px 8px;font-size:11px;font-weight:700}
+  .calib-tab.on{background:rgba(208,100,60,.14);border-color:var(--clay);color:var(--clay-soft)}
+  .calib-msg{font-size:12px;color:var(--muted);line-height:1.5;min-height:20px;margin-bottom:8px}
+  .calib-msg.ok{color:var(--ok)} .calib-msg.bad{color:var(--bad)}
+  .phone-link{display:flex;gap:6px;margin-top:8px}
+  .phone-link input{flex:1;min-width:0;padding:7px 8px;border-radius:5px;border:1px solid var(--line);background:#0b121c;color:var(--muted);font-size:11px;font-family:var(--mono)}
+
+  .toast-wrap{position:fixed;right:16px;bottom:16px;display:flex;flex-direction:column;gap:8px;z-index:60;max-width:360px}
+  .toast{background:#162235;border:1px solid #34506f;border-left:3px solid var(--clay);border-radius:7px;padding:10px 12px;font-size:12px;color:var(--text);line-height:1.4;box-shadow:0 12px 30px rgba(0,0,0,.35);animation:in .18s ease-out}
+  .toast.bad{border-left-color:var(--bad)} .toast.ok{border-left-color:var(--ok)}
+  @keyframes in{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+
+  @media (max-width:1100px){main{grid-template-columns:250px minmax(0,1fr)}.right-panel{display:none}}
+  @media (max-width:760px){body{overflow:auto}.app{height:auto;min-height:100vh}main{grid-template-columns:1fr;padding:8px}.left-panel{max-height:250px}.stage-body{min-height:54vw}.right-panel{display:flex}.brand p{display:none}.head-right .nav-link{display:none}}
+</style>
+</head>
+<body>
+<div class="app">
+  <header>
+    <div class="brand">
+      <span class="badge">CLEAR</span>
+      <div><h1>Field Detection Console</h1><p>Player · Racket · Ball · Court</p></div>
+    </div>
+    <div class="head-right">
+      <div class="status-pill"><span class="dot" id="liveDot"></span><span id="liveText">STANDBY</span></div>
+      <a class="nav-link" href="/">Analytics Studio</a>
+    </div>
+  </header>
+
+  <main>
+    <section class="panel left-panel">
+      <div class="panel-head">
+        <span class="panel-title">Channels</span>
+        <button class="btn sm primary" onclick="openAddCamera()">+ Add</button>
+      </div>
+      <div class="camera-list" id="cameraList"><div class="empty">Loading channels…</div></div>
+    </section>
+
+    <section class="panel stage-wrap">
+      <div class="stage-head">
+        <div class="stage-title"><span id="stageName">No channel active</span></div>
+        <div style="display:flex;gap:6px">
+          <button class="btn sm" id="stopBtn" onclick="stopChannel()" disabled>Stop</button>
+          <button class="btn sm" onclick="openCalibration()" id="calibBtn" disabled>Calibrate</button>
+        </div>
+      </div>
+      <div class="stage-body">
+        <canvas id="viewCanvas" width="960" height="540"></canvas>
+        <div class="no-feed" id="noFeed">
+          <div class="scanline"></div>
+          <strong>Select a channel</strong>
+          <p>Activate one camera from the left. Only one channel is decoded and tested at a time.</p>
+        </div>
+      </div>
+      <div class="stage-foot">
+        <div class="toggles" id="overlayToggles">
+          <button class="toggle" data-overlay="person" data-on="true"><span class="sw"></span>Player</button>
+          <button class="toggle" data-overlay="racket" data-on="true"><span class="sw"></span>Racket</button>
+          <button class="toggle" data-overlay="ball" data-on="true"><span class="sw"></span>Ball</button>
+          <button class="toggle" data-overlay="court" data-on="true"><span class="sw"></span>Court</button>
+        </div>
+        <div style="display:flex;gap:6px">
+          <button class="btn sm" id="snapBtn" onclick="saveSnapshot()" disabled>Snapshot</button>
+        </div>
+      </div>
+    </section>
+
+    <aside class="panel right-panel">
+      <div class="panel-head"><span class="panel-title">Live Telemetry</span><span class="pill" id="sourcePill">—</span></div>
+      <div class="panel-body">
+        <div class="stat-grid">
+          <div class="stat"><label>Persons</label><b class="cyan" id="statPerson">0</b></div>
+          <div class="stat"><label>Rackets</label><b class="racket" id="statRacket">0</b></div>
+          <div class="stat"><label>Balls</label><b class="ball" id="statBall">0</b></div>
+          <div class="stat"><label>FPS</label><b id="statFps">0.0</b></div>
+          <div class="stat"><label>Inference</label><b id="statMs">0 ms</b></div>
+          <div class="stat"><label>Device</label><b id="statDevice">—</b></div>
+        </div>
+
+        <div class="section">
+          <h3>Court calibration</h3>
+          <div class="row"><span>Status</span><b id="calibState">Not set</b></div>
+          <div class="row"><span>Method</span><b id="calibMethod">—</b></div>
+          <div class="row"><span>Reprojection</span><b id="calibErr">—</b></div>
+          <div class="row"><span>Court mode</span>
+            <select id="courtMode" onchange="setCourtMode(this.value)">
+              <option value="singles">Singles</option><option value="doubles">Doubles</option>
+            </select>
+          </div>
+          <button class="btn wide" style="margin-top:6px" id="calibOpenBtn" onclick="openCalibration()" disabled>Open calibration</button>
+        </div>
+
+        <div class="section">
+          <h3>Detection thresholds</h3>
+          <div class="slider-row"><span>Person</span><input id="thPerson" type="range" min="5" max="90" value="35" oninput="thLabel('Person',this.value)"/><b class="mono" id="thPersonVal">.35</b></div>
+          <div class="slider-row"><span>Racket</span><input id="thRacket" type="range" min="5" max="90" value="25" oninput="thLabel('Racket',this.value)"/><b class="mono" id="thRacketVal">.25</b></div>
+          <div class="slider-row"><span>Ball</span><input id="thBall" type="range" min="5" max="90" value="18" oninput="thLabel('Ball',this.value)"/><b class="mono" id="thBallVal">.18</b></div>
+          <button class="btn sm wide" onclick="applyThresholds()" id="thApply" disabled>Apply thresholds</button>
+        </div>
+
+        <div class="section">
+          <h3>Session log</h3>
+          <div class="events" id="events"><div>No events yet.</div></div>
+        </div>
+      </div>
+    </aside>
+  </main>
+</div>
+
+<div class="modal-backdrop" id="addModal">
+  <div class="modal small">
+    <div class="modal-head"><h2>Add camera channel</h2><button class="btn sm ghost" onclick="closeModal('addModal')">Close</button></div>
+    <div class="modal-body">
+      <div class="field"><label>Name</label><input id="camName" placeholder="Court 1 — North" maxlength="80"/></div>
+      <div class="field"><label>Source</label>
+        <select id="camSource" onchange="toggleRtsp()"><option value="browser">Phone browser</option><option value="rtsp">RTSP stream</option></select>
+      </div>
+      <div class="field" id="rtspField" style="display:none"><label>RTSP URL</label><input id="camRtsp" placeholder="rtsp://user:pass@host:554/stream"/></div>
+      <p class="hint" id="sourceHint">Phone browser: open the generated link on a phone on the same tunnel. The tab must stay awake.</p>
+    </div>
+    <div class="modal-foot"><button class="btn" onclick="closeModal('addModal')">Cancel</button><button class="btn primary" onclick="createCamera()">Create channel</button></div>
+  </div>
+</div>
+
+<div class="modal-backdrop" id="calibModal">
+  <div class="modal">
+    <div class="modal-head"><h2>Court calibration</h2><button class="btn sm ghost" onclick="closeModal('calibModal')">Close</button></div>
+    <div class="modal-body">
+      <div class="calib-tabs">
+        <button class="calib-tab on" data-mode="manual" onclick="setCalibMode('manual')">Manual 4 corners</button>
+        <button class="calib-tab" data-mode="auto" onclick="setCalibMode('auto')">Auto lines</button>
+        <button class="calib-tab" data-mode="segmentation" onclick="setCalibMode('segmentation')">Segmentation</button>
+      </div>
+      <p class="hint" id="calibHint">Tap four court corners in order: far-left, far-right, near-right, near-left.</p>
+      <div class="calib-stage"><canvas id="calibCanvas" width="960" height="540"></canvas></div>
+      <div class="calib-msg" id="calibMsg"></div>
+      <div id="autoActions" style="display:none;gap:8px;margin-bottom:10px">
+        <button class="btn primary wide" id="autoRunBtn" onclick="runAutoCalibration()">Run auto court detection</button>
+      </div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn" onclick="clearCalibPoints()">Reset points</button>
+      <button class="btn primary" id="calibSaveBtn" onclick="saveManualCalibration()">Save 4-corner calibration</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast-wrap" id="toasts"></div>
+
+<script>
+const state = {cameras: [], activeId: null, active: null, ws: null, reconnect: null, lastMetaAt: 0, calibMode: "manual", calibPoints: [], calibImage: null, calibCamera: null};
+const $ = id => document.getElementById(id);
+const wsProto = location.protocol === "https:" ? "wss:" : "ws:";
+
+async function api(path, opts={}){
+  const res = await fetch(path, {headers: {"Content-Type":"application/json", ...(opts.headers||{})}, ...opts});
+  if(res.status === 401){ location.href = "/field/login?next=" + encodeURIComponent(location.pathname); throw new Error("Unauthorized"); }
+  const data = await res.json().catch(()=>({}));
+  if(!res.ok) throw new Error(data.detail || ("HTTP " + res.status));
+  return data;
+}
+function toast(msg, kind=""){ const el=document.createElement("div"); el.className="toast "+kind; el.textContent=msg; $("toasts").appendChild(el); setTimeout(()=>el.remove(), 4200); }
+function fmtAge(sec){ if(sec==null) return "—"; if(sec<1) return "now"; if(sec<60) return Math.round(sec)+"s"; return Math.round(sec/60)+"m"; }
+
+async function loadCameras(){
+  try{
+    const data = await api("/api/field/cameras");
+    state.cameras = data.cameras || [];
+    state.activeId = data.active_id;
+    state.active = state.cameras.find(c => c.id === state.activeId) || null;
+    renderCameras();
+    renderActive();
+  }catch(err){ /* keep last view */ }
+}
+
+function renderCameras(){
+  const wrap = $("cameraList");
+  if(!state.cameras.length){ wrap.innerHTML = '<div class="empty"><strong>No channels yet</strong>Add a phone browser camera or an RTSP stream.</div>'; return; }
+  wrap.innerHTML = "";
+  for(const cam of state.cameras){
+    const card = document.createElement("div");
+    card.className = "camera-card" + (cam.active ? " active" : "");
+    const online = cam.online ? '<span class="pill online">online</span>' : '<span class="pill offline">offline</span>';
+    const active = cam.active ? '<span class="pill active">active</span>' : "";
+    const source = cam.source === "browser" ? "PHONE" : "RTSP";
+    const actions = [];
+    if(cam.active) actions.push('<button class="btn sm danger" onclick="event.stopPropagation();stopChannel()">Stop</button>');
+    else actions.push('<button class="btn sm primary" onclick="event.stopPropagation();activateChannel(\''+cam.id+'\')">Activate</button>');
+    if(cam.source === "browser") actions.push('<button class="btn sm" onclick="event.stopPropagation();copyPhone(\''+cam.id+'\')">Phone link</button>');
+    actions.push('<button class="btn sm danger" onclick="event.stopPropagation();deleteCamera(\''+cam.id+'\')">Delete</button>');
+    card.innerHTML = `
+      <div class="cam-top"><div class="cam-name">${escapeHtml(cam.name)}</div><div style="display:flex;gap:4px;flex-wrap:wrap;justify-content:flex-end">${active}${online}</div></div>
+      <div class="cam-meta"><span>${source}</span><span>${cam.fps ? cam.fps.toFixed(1)+" fps" : "— fps"}</span><span>${cam.resolution ? cam.resolution[0]+"×"+cam.resolution[1] : "no frame"}</span></div>
+      <div class="cam-actions">${actions.join("")}</div>`;
+    wrap.appendChild(card);
+  }
+}
+
+function renderActive(){
+  const cam = state.active;
+  $("stageName").textContent = cam ? cam.name : "No channel active";
+  $("stopBtn").disabled = !cam;
+  $("calibBtn").disabled = !cam;
+  $("calibOpenBtn").disabled = !cam;
+  $("snapBtn").disabled = !cam;
+  $("thApply").disabled = !cam;
+  $("sourcePill").textContent = cam ? (cam.source === "browser" ? "PHONE" : "RTSP") : "—";
+  $("liveDot").className = "dot" + (cam && cam.online ? " live" : "");
+  $("liveText").textContent = cam ? (cam.online ? "LIVE" : "WAITING") : "STANDBY";
+  if(!cam){ $("noFeed").classList.remove("hide"); disconnectView(); return; }
+  $("noFeed").classList.add("hide");
+  $("courtMode").value = cam.court_mode || "singles";
+  $("calibState").textContent = cam.calibration && cam.calibration.ready ? "Ready" : "Not set";
+  $("calibMethod").textContent = cam.calibration && cam.calibration.method ? cam.calibration.method : "—";
+  $("calibErr").textContent = cam.calibration && cam.calibration.reproj_error_cm != null ? "±" + cam.calibration.reproj_error_cm + " cm" : "—";
+  if(cam.overlays) for(const key of ["person","racket","ball","court"]){ const b=document.querySelector('.toggle[data-overlay="'+key+'"]'); if(b) b.dataset.on = cam.overlays[key] ? "true":"false"; }
+  if(cam.detector){
+    $("thPerson").value = Math.round(cam.detector.person*100); $("thPersonVal").textContent = "."+String(Math.round(cam.detector.person*100)).padStart(2,"0");
+    $("thRacket").value = Math.round(cam.detector.racket*100); $("thRacketVal").textContent = "."+String(Math.round(cam.detector.racket*100)).padStart(2,"0");
+    $("thBall").value = Math.round(cam.detector.ball*100); $("thBallVal").textContent = "."+String(Math.round(cam.detector.ball*100)).padStart(2,"0");
+  }
+  updateStats(cam);
+  if(cam.active) connectView(cam.id); else disconnectView();
+}
+
+function updateStats(cam){
+  if(!cam) return;
+  const d = cam.detections || {};
+  $("statPerson").textContent = d.person ?? 0;
+  $("statRacket").textContent = d.racket ?? 0;
+  $("statBall").textContent = d.ball ?? 0;
+  $("statFps").textContent = (cam.fps || 0).toFixed(1);
+  $("statMs").textContent = Math.round(cam.inference_ms || 0) + " ms";
+  $("statDevice").textContent = (cam.device || "—").toUpperCase();
+  $("calibState").textContent = cam.calibration && cam.calibration.ready ? "Ready" : "Not set";
+  $("calibMethod").textContent = cam.calibration && cam.calibration.method ? cam.calibration.method : "—";
+  $("calibErr").textContent = cam.calibration && cam.calibration.reproj_error_cm != null ? "±" + cam.calibration.reproj_error_cm + " cm" : "—";
+  $("liveDot").className = "dot" + (cam.online ? " live" : "");
+  $("liveText").textContent = cam.online ? "LIVE" : "WAITING";
+}
+
+async function activateChannel(id){ try{ await api("/api/field/cameras/"+id+"/activate", {method:"POST"}); await loadCameras(); }catch(e){ toast(e.message,"bad"); } }
+async function stopChannel(){ try{ await api("/api/field/deactivate", {method:"POST"}); disconnectView(); await loadCameras(); }catch(e){ toast(e.message,"bad"); } }
+async function deleteCamera(id){ if(!confirm("Delete this channel and its stored calibration link?")) return; try{ await api("/api/field/cameras/"+id, {method:"DELETE"}); await loadCameras(); toast("Channel deleted."); }catch(e){ toast(e.message,"bad"); } }
+
+function connectView(id){
+  if(state.ws && state.ws.__cam === id && state.ws.readyState <= 1) return;
+  disconnectView();
+  const ws = new WebSocket(`${wsProto}//${location.host}/ws/field/view/${id}`);
+  ws.__cam = id;
+  ws.binaryType = "blob";
+  ws.onmessage = async ev => {
+    if(typeof ev.data === "string"){
+      let msg; try{ msg = JSON.parse(ev.data); }catch(_){ return; }
+      if(msg.type === "meta" && msg.camera){
+        state.active = msg.camera;
+        if(Date.now() - state.lastMetaAt > 240){ state.lastMetaAt = Date.now(); updateStats(msg.camera); }
+      }else if(msg.type === "state" && msg.active === false){
+        $("noFeed").classList.remove("hide");
+      }
+      return;
+    }
+    try{
+      const bmp = await createImageBitmap(ev.data);
+      const canvas = $("viewCanvas");
+      if(canvas.width !== bmp.width || canvas.height !== bmp.height){ canvas.width = bmp.width; canvas.height = bmp.height; }
+      canvas.getContext("2d").drawImage(bmp, 0, 0);
+      bmp.close();
+    }catch(_){}
+  };
+  ws.onclose = ev => {
+    if(ev.code === 1008){ location.href = "/field/login?next=" + encodeURIComponent(location.pathname); return; }
+    if(state.activeId === id){ clearTimeout(state.reconnect); state.reconnect = setTimeout(()=>{ if(state.activeId===id) connectView(id); }, 1600); }
+  };
+  ws.onerror = () => {};
+  state.ws = ws;
+}
+function disconnectView(){ if(state.ws){ try{state.ws.onclose=null;state.ws.close();}catch(_){} state.ws=null; } clearTimeout(state.reconnect); }
+
+function openAddCamera(){ $("addModal").classList.add("open"); $("camName").focus(); }
+function closeModal(id){ $(id).classList.remove("open"); }
+function toggleRtsp(){ const rtsp = $("camSource").value === "rtsp"; $("rtspField").style.display = rtsp ? "block":"none"; $("sourceHint").textContent = rtsp ? "Server pulls this RTSP URL only while the channel is active." : "Phone browser: open the generated link on a phone on the same tunnel. The tab must stay awake."; }
+async function createCamera(){
+  const name = $("camName").value.trim(); const source = $("camSource").value; const rtsp = $("camRtsp").value.trim();
+  if(!name){ toast("Name required.","bad"); return; }
+  if(source === "rtsp" && !rtsp){ toast("RTSP URL required.","bad"); return; }
+  try{
+    const cam = await api("/api/field/cameras", {method:"POST", body: JSON.stringify({name, source, rtsp_url: rtsp})});
+    closeModal("addModal"); $("camName").value=""; $("camRtsp").value="";
+    await loadCameras();
+    toast("Channel created.", "ok");
+    if(cam.source === "browser"){ const link = location.origin + cam.phone_path; navigator.clipboard?.writeText(link).catch(()=>{}); toast("Phone link copied: " + link, "ok"); }
+  }catch(e){ toast(e.message,"bad"); }
+}
+async function copyPhone(id){ const cam = state.cameras.find(c=>c.id===id); if(!cam) return; const link = location.origin + cam.phone_path; try{ await navigator.clipboard.writeText(link); toast("Phone link copied.", "ok"); }catch(_){ prompt("Phone camera link", link); } }
+
+document.querySelectorAll(".toggle").forEach(btn => btn.addEventListener("click", async () => {
+  const cam = state.active; if(!cam) return;
+  const key = btn.dataset.overlay; const next = btn.dataset.on !== "true"; btn.dataset.on = next ? "true":"false";
+  try{ await api("/api/field/cameras/"+cam.id, {method:"PATCH", body: JSON.stringify({overlays:{[key]:next}})}); }catch(e){ btn.dataset.on = next?"false":"true"; toast(e.message,"bad"); }
+}));
+
+function thLabel(name, value){ const id = "th"+name+"Val"; $(id).textContent = "."+String(value).padStart(2,"0"); }
+async function applyThresholds(){
+  const cam = state.active; if(!cam) return;
+  const detector = {person: +$("thPerson").value/100, racket: +$("thRacket").value/100, ball: +$("thBall").value/100};
+  try{ await api("/api/field/cameras/"+cam.id, {method:"PATCH", body: JSON.stringify({detector})}); toast("Thresholds updated.", "ok"); }
+  catch(e){ toast(e.message,"bad"); }
+}
+async function setCourtMode(mode){ const cam=state.active; if(!cam) return; try{ await api("/api/field/cameras/"+cam.id,{method:"PATCH",body:JSON.stringify({court_mode:mode})}); await loadCameras(); }catch(e){ toast(e.message,"bad"); } }
+
+async function saveSnapshot(){
+  const cam = state.active; if(!cam) return;
+  try{ const r = await api("/api/field/cameras/"+cam.id+"/snapshot", {method:"POST"}); toast("Snapshot saved: " + r.name, "ok"); loadEvents(); }
+  catch(e){ toast(e.message,"bad"); }
+}
+
+async function openCalibration(){
+  const cam = state.active; if(!cam){ toast("Activate a channel first.","bad"); return; }
+  state.calibCamera = cam; state.calibPoints = []; state.calibMode = "manual";
+  document.querySelectorAll(".calib-tab").forEach(b=>b.classList.toggle("on", b.dataset.mode==="manual"));
+  $("autoActions").style.display = "none"; $("calibSaveBtn").style.display = ""; $("calibMsg").textContent = ""; $("calibMsg").className = "calib-msg";
+  $("calibHint").textContent = "Tap four court corners in order: far-left, far-right, near-right, near-left.";
+  $("calibModal").classList.add("open");
+  await loadCalibImage();
+}
+
+async function loadCalibImage(){
+  if(!state.calibCamera) return;
+  try{
+    const url = "/api/field/cameras/"+state.calibCamera.id+"/snapshot.jpg?raw=true&t="+Date.now();
+    const img = await loadImage(url);
+    state.calibImage = img;
+    const canvas = $("calibCanvas"); canvas.width = img.naturalWidth || img.width; canvas.height = img.naturalHeight || img.height;
+    drawCalib();
+    $("calibMsg").textContent = "Frame captured. Click the court corners.";
+    $("calibMsg").className = "calib-msg";
+  }catch(e){ $("calibMsg").textContent = "Could not capture a frame. Wait for video on the active channel."; $("calibMsg").className = "calib-msg bad"; }
+}
+function loadImage(src){ return new Promise((resolve,reject)=>{ const img=new Image(); img.onload=()=>resolve(img); img.onerror=reject; img.src=src; }); }
+
+function setCalibMode(mode){
+  state.calibMode = mode;
+  document.querySelectorAll(".calib-tab").forEach(b=>b.classList.toggle("on", b.dataset.mode===mode));
+  const manual = mode === "manual";
+  $("autoActions").style.display = manual ? "none":"block";
+  $("calibSaveBtn").style.display = manual ? "" : "none";
+  $("calibHint").textContent = manual
+    ? "Tap four court corners in order: far-left, far-right, near-right, near-left."
+    : (mode === "auto" ? "Heuristic painted-line detector. It will apply a suggested quad; verify on the live view." : "Needs CLEAR_COURT_SEG_WEIGHTS. Applies the largest court mask as a quad.");
+  $("calibMsg").textContent = ""; $("calibMsg").className = "calib-msg";
+  drawCalib();
+}
+
+function drawCalib(){
+  const canvas = $("calibCanvas"); const ctx = canvas.getContext("2d");
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+  if(state.calibImage) ctx.drawImage(state.calibImage,0,0,canvas.width,canvas.height);
+  const labels = ["FAR LEFT","FAR RIGHT","NEAR RIGHT","NEAR LEFT"];
+  state.calibPoints.forEach((p,i)=>{
+    ctx.beginPath(); ctx.arc(p.x,p.y,7,0,Math.PI*2); ctx.fillStyle="#d0643c"; ctx.fill();
+    ctx.lineWidth=2; ctx.strokeStyle="#fff"; ctx.stroke();
+    ctx.fillStyle="#fff"; ctx.font="600 13px ui-monospace,monospace"; ctx.fillText(labels[i]||"", p.x+11, p.y+4);
+    if(i>0){ const q=state.calibPoints[i-1]; ctx.beginPath(); ctx.moveTo(q.x,q.y); ctx.lineTo(p.x,p.y); ctx.strokeStyle="#d0643c"; ctx.lineWidth=2; ctx.stroke(); }
+  });
+  if(state.calibPoints.length===4){ const p=state.calibPoints; ctx.beginPath(); ctx.moveTo(p[0].x,p[0].y); for(let i=1;i<4;i++) ctx.lineTo(p[i].x,p[i].y); ctx.closePath(); ctx.strokeStyle="#d9f99d"; ctx.lineWidth=2; ctx.stroke(); }
+}
+$("calibCanvas").addEventListener("click", ev => {
+  if(state.calibMode !== "manual" || !state.calibImage) return;
+  const canvas = ev.currentTarget, rect = canvas.getBoundingClientRect();
+  const x = (ev.clientX - rect.left) * canvas.width / rect.width;
+  const y = (ev.clientY - rect.top) * canvas.height / rect.height;
+  if(state.calibPoints.length >= 4) state.calibPoints = [];
+  state.calibPoints.push({x,y}); drawCalib();
+  $("calibMsg").textContent = state.calibPoints.length < 4 ? `${state.calibPoints.length}/4 corners set.` : "4 corners set. Save to apply.";
+  $("calibMsg").className = "calib-msg" + (state.calibPoints.length===4 ? " ok" : "");
+});
+function clearCalibPoints(){ state.calibPoints=[]; drawCalib(); $("calibMsg").textContent=""; $("calibMsg").className="calib-msg"; }
+async function saveManualCalibration(){
+  if(!state.calibCamera) return;
+  if(state.calibPoints.length !== 4){ toast("Tap 4 corners first.","bad"); return; }
+  const names = ["far_left_doubles","far_right_doubles","near_right_doubles","near_left_doubles"];
+  const anchors = {}; state.calibPoints.forEach((p,i)=>anchors[names[i]]=[p.x,p.y]);
+  try{
+    await api("/api/field/cameras/"+state.calibCamera.id+"/calibration", {method:"POST", body: JSON.stringify({anchors_px:anchors, method:"manual"})});
+    $("calibMsg").textContent = "Calibration saved."; $("calibMsg").className = "calib-msg ok"; toast("Court calibration saved.","ok");
+    await loadCameras(); loadEvents();
+  }catch(e){ $("calibMsg").textContent = e.message; $("calibMsg").className = "calib-msg bad"; }
+}
+async function runAutoCalibration(){
+  if(!state.calibCamera) return;
+  const endpoint = state.calibMode === "auto" ? "auto" : "segmentation";
+  $("autoRunBtn").disabled = true; $("calibMsg").textContent = "Running detector…"; $("calibMsg").className="calib-msg";
+  try{
+    const r = await api("/api/field/cameras/"+state.calibCamera.id+"/calibration/"+endpoint, {method:"POST"});
+    $("calibMsg").textContent = (r.note || "Calibration applied.") + " Confidence " + Math.round((r.confidence||0)*100) + "%. Reprojection ±" + r.reproj_error_cm + " cm.";
+    $("calibMsg").className = "calib-msg ok"; toast("Court calibration applied.","ok");
+    await loadCameras(); loadEvents();
+  }catch(e){ $("calibMsg").textContent = e.message; $("calibMsg").className = "calib-msg bad"; }
+  finally{ $("autoRunBtn").disabled = false; }
+}
+
+async function loadEvents(){
+  const cam = state.active; if(!cam){ $("events").innerHTML="<div>No events yet.</div>"; return; }
+  try{
+    const data = await api("/api/field/cameras/"+cam.id+"/events?limit=8");
+    const events = (data.events||[]).slice().reverse();
+    $("events").innerHTML = events.length ? events.map(e=>{
+      const t = (e.ts||"").slice(11,19); const kind = e.event||"?";
+      if(kind==="snapshot") return `<div>${t}  SNAP  ${e.detections ? (e.detections.person||0)+"p/"+(e.detections.racket||0)+"r/"+(e.detections.ball||0)+"b" : ""}</div>`;
+      if(kind==="detections") return `<div>${t}  DET   ${e.counts ? e.counts.person+"p/"+e.counts.racket+"r/"+e.counts.ball+"b" : ""}</div>`;
+      return `<div>${t}  ${kind.toUpperCase()}</div>`;
+    }).join("") : "<div>No events yet.</div>";
+  }catch(_){}
+}
+function escapeHtml(str){ return String(str).replace(/[&<>"']/g, s=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[s])); }
+
+setInterval(loadCameras, 3000);
+setInterval(()=>{ if(state.active) loadEvents(); }, 6000);
+loadCameras().then(()=>loadEvents());
+</script>
+</body>
+</html>

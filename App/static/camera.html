@@ -1,0 +1,216 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
+<meta name="theme-color" content="#090d14"/>
+<title>CLEAR Camera Node</title>
+<style>
+  :root{--bg:#090d14;--panel:#101722;--line:#233247;--text:#f4f7fb;--muted:#8fa2ba;--clay:#d0643c;--ok:#34d399;--warn:#fbbf24;--bad:#f87171;--mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+  *{box-sizing:border-box}
+  body{margin:0;min-height:100vh;background:radial-gradient(circle at 50% 0%,#182537,#090d14 55%);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;display:flex;flex-direction:column}
+  header{padding:14px 16px;border-bottom:1px solid var(--line);display:flex;align-items:center;justify-content:space-between;gap:10px;background:#0c121b}
+  .brand{display:flex;align-items:center;gap:9px;min-width:0}
+  .badge{background:var(--clay);color:#fff;font-weight:800;font-size:11px;letter-spacing:.13em;padding:5px 7px;border-radius:4px}
+  .brand h1{font-size:14px;margin:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .pill{font-size:10px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;padding:5px 7px;border-radius:999px;border:1px solid var(--line);color:var(--muted);font-family:var(--mono)}
+  .pill.ok{color:var(--ok);border-color:rgba(52,211,153,.45);background:rgba(52,211,153,.08)}
+  .pill.warn{color:var(--warn);border-color:rgba(251,191,36,.4);background:rgba(251,191,36,.08)}
+  .pill.bad{color:var(--bad);border-color:rgba(248,113,113,.4);background:rgba(248,113,113,.08)}
+  main{flex:1;width:min(100%,760px);margin:0 auto;padding:14px;display:flex;flex-direction:column;gap:12px}
+  .video-wrap{position:relative;background:#05080d;border:1px solid var(--line);border-radius:12px;overflow:hidden;aspect-ratio:16/9;display:grid;place-items:center}
+  video{width:100%;height:100%;object-fit:contain;background:#05080d;display:block}
+  .video-note{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:22px;gap:8px;color:var(--muted);font-size:13px;line-height:1.5}
+  .video-note strong{color:var(--text);font-size:15px}
+  .video-note.hide{display:none}
+  .dot{width:8px;height:8px;border-radius:50%;background:var(--muted);display:inline-block;margin-right:6px}
+  .dot.live{background:var(--ok);box-shadow:0 0 0 4px rgba(52,211,153,.13)}
+  .dot.armed{background:var(--warn)}
+  .stats{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+  .stat{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:10px}
+  .stat label{display:block;font-size:9px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);font-weight:800}
+  .stat b{display:block;margin-top:4px;font-family:var(--mono);font-size:14px}
+  .actions{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+  button{border:1px solid var(--line);background:#141e2c;color:var(--text);border-radius:8px;padding:12px;font-size:14px;font-weight:700;cursor:pointer}
+  button.primary{background:var(--clay);border-color:var(--clay);color:#fff}
+  button.ghost{background:transparent}
+  button:disabled{opacity:.45;cursor:not-allowed}
+  .banner{border:1px solid var(--line);background:rgba(16,23,34,.85);border-radius:9px;padding:11px 12px;font-size:12px;color:var(--muted);line-height:1.55}
+  .banner b{color:var(--text)}
+  .banner.standby{border-color:rgba(251,191,36,.4);background:rgba(251,191,36,.06);color:#fde68a}
+  .banner.live{border-color:rgba(52,211,153,.35);background:rgba(52,211,153,.06);color:#a7f3d0}
+  .banner.bad{border-color:rgba(248,113,113,.4);background:rgba(248,113,113,.06);color:#fecaca}
+  .foot{font-size:11px;color:#60718a;text-align:center;line-height:1.5;padding-bottom:calc(14px + env(safe-area-inset-bottom))}
+  code{font-family:var(--mono);font-size:11px;color:#cbd5e1}
+  @media(max-width:420px){.stats{grid-template-columns:1fr 1fr}.brand h1{max-width:170px}}
+</style>
+</head>
+<body>
+<header>
+  <div class="brand"><span class="badge">CLEAR</span><h1 id="camName">Camera node</h1></div>
+  <span class="pill" id="netPill">offline</span>
+</header>
+<main>
+  <div class="video-wrap">
+    <video id="video" playsinline autoplay muted></video>
+    <div class="video-note" id="videoNote"><strong>Camera idle</strong><span>Tap Start camera. Keep this tab open and the screen awake.</span></div>
+  </div>
+
+  <div class="banner" id="banner"><b>Standby.</b> Activate this channel in the field console to begin sending frames.</div>
+
+  <div class="stats">
+    <div class="stat"><label>Channel</label><b id="statState">idle</b></div>
+    <div class="stat"><label>Sent</label><b id="statSent">0</b></div>
+    <div class="stat"><label>Send rate</label><b id="statRate">0.0/s</b></div>
+    <div class="stat"><label>Camera</label><b id="statRes">—</b></div>
+    <div class="stat"><label>Upload</label><b id="statUp">—</b></div>
+    <div class="stat"><label>Battery</label><b id="statBattery">—</b></div>
+  </div>
+
+  <div class="actions">
+    <button class="primary" id="startBtn" onclick="startCamera()">Start camera</button>
+    <button id="stopBtn" onclick="stopCamera()" disabled>Stop camera</button>
+  </div>
+
+  <div class="banner" style="border-color:#1f2c3d">
+    <b>Field tip.</b> Point the rear camera at the court, keep the phone on a tripod or stable surface, and leave this tab in the foreground. Do not lock the screen.
+  </div>
+  <div class="foot">Camera ID <code id="camId"></code> · frames are sent only while this channel is active.</div>
+</main>
+
+<script>
+const CAMERA = __CAMERA_JSON__;
+let stream = null, ws = null, running = false, active = false, sendTimer = null, pingTimer = null, inFlight = false;
+let framesSent = 0, framesWindow = 0, lastRateAt = performance.now(), lastPingAt = 0, wakeLock = null;
+let lastBytesAt = 0, bytesWindow = 0;
+const $ = id => document.getElementById(id);
+const wsProto = location.protocol === "https:" ? "wss:" : "ws:";
+const SEND_INTERVAL_MS = 125;
+const MAX_WIDTH = 640;
+const JPEG_QUALITY = 0.66;
+
+$("camName").textContent = CAMERA.name;
+$("camId").textContent = CAMERA.id;
+document.title = "CLEAR | " + CAMERA.name;
+
+function setPill(text, cls){ const el=$("netPill"); el.textContent=text; el.className="pill "+(cls||""); }
+function setBanner(text, cls, html){ const el=$("banner"); el.className="banner "+(cls||""); el.innerHTML = html || text; }
+function setNote(show, title, text){ const el=$("videoNote"); el.classList.toggle("hide", !show); if(title) el.querySelector("strong").textContent=title; if(text !== undefined) el.querySelector("span").textContent=text; }
+
+function connectIngest(){
+  if(ws && ws.readyState <= 1) return;
+  const url = `${wsProto}//${location.host}/ws/field/ingest/${encodeURIComponent(CAMERA.id)}?token=${encodeURIComponent(CAMERA.token)}`;
+  ws = new WebSocket(url);
+  ws.onopen = () => { setPill("linked","ok"); ping(); };
+  ws.onmessage = ev => {
+    let msg; try{ msg = JSON.parse(ev.data); }catch(_){ return; }
+    if(msg.type === "status"){
+      active = !!msg.active;
+      if(active){ setBanner("", "live", "<b>Live.</b> This channel is active. Frames are being sent to the detector."); setPill("live","ok"); }
+      else { setBanner("Standby.", "standby", "<b>Standby.</b> Activate this channel in the field console to begin sending frames."); setPill("linked","ok"); }
+      $("statState").textContent = active ? "live" : "standby";
+      if(active) requestWakeLock();
+    }
+  };
+  ws.onclose = ev => {
+    setPill("offline","bad");
+    if(ev.code === 1008){ setBanner("Camera link rejected. Sign in again or check the channel token.","bad"); return; }
+    if(running) setTimeout(connectIngest, 1500);
+  };
+  ws.onerror = () => setPill("error","bad");
+}
+function ping(){ if(ws && ws.readyState === 1) ws.send("ping"); }
+
+async function startCamera(){
+  if(!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia){ setBanner("Camera API unavailable. Use HTTPS or localhost.","bad"); return; }
+  if(!window.isSecureContext){ setBanner("Camera requires HTTPS. Open this link through the Coolify domain or tunnel, not plain HTTP.","bad"); return; }
+  try{
+    stream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: { ideal: "environment" }, width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30, max: 30 } },
+      audio: false
+    });
+    const video = $("video"); video.srcObject = stream; await video.play();
+    const track = stream.getVideoTracks()[0];
+    const settings = track.getSettings ? track.getSettings() : {};
+    $("statRes").textContent = settings.width && settings.height ? `${settings.width}×${settings.height}` : "ready";
+    setNote(false);
+    running = true; $("startBtn").disabled = true; $("stopBtn").disabled = false;
+    setBanner("Standby.", "standby", "<b>Camera running.</b> Activate this channel in the field console to begin sending frames.");
+    connectIngest();
+    startSending();
+    requestWakeLock();
+  }catch(err){ setBanner("Camera error: " + (err.message || err), "bad"); }
+}
+
+function stopCamera(){
+  running = false; active = false;
+  if(sendTimer) clearInterval(sendTimer); sendTimer = null;
+  if(pingTimer) clearInterval(pingTimer); pingTimer = null;
+  if(stream){ stream.getTracks().forEach(t=>t.stop()); stream=null; }
+  $("video").srcObject = null;
+  $("startBtn").disabled = false; $("stopBtn").disabled = true;
+  $("statState").textContent = "idle"; $("statRes").textContent = "—";
+  setNote(true, "Camera idle", "Tap Start camera. Keep this tab open and the screen awake.");
+  setBanner("Standby.", "standby", "<b>Camera stopped.</b> Start the camera again when ready.");
+  if(ws){ try{ ws.close(); }catch(_){} ws=null; }
+  releaseWakeLock();
+}
+
+function startSending(){
+  if(sendTimer) clearInterval(sendTimer);
+  if(pingTimer) clearInterval(pingTimer);
+  sendTimer = setInterval(sendFrame, SEND_INTERVAL_MS);
+  pingTimer = setInterval(()=>{ if(!active && Date.now()-lastPingAt > 5000){ lastPingAt=Date.now(); ping(); } }, 5000);
+}
+
+async function sendFrame(){
+  if(!running || !active || inFlight || !ws || ws.readyState !== 1) return;
+  const video = $("video");
+  if(!video.videoWidth || !video.videoHeight) return;
+  inFlight = true;
+  try{
+    const scale = Math.min(1, MAX_WIDTH / video.videoWidth);
+    const w = Math.max(1, Math.round(video.videoWidth * scale));
+    const h = Math.max(1, Math.round(video.videoHeight * scale));
+    const canvas = sendFrame.canvas || (sendFrame.canvas = document.createElement("canvas"));
+    if(canvas.width !== w || canvas.height !== h){ canvas.width=w; canvas.height=h; }
+    const ctx = canvas.getContext("2d", {alpha:false});
+    ctx.drawImage(video, 0, 0, w, h);
+    const blob = await new Promise(resolve => canvas.toBlob(resolve, "image/jpeg", JPEG_QUALITY));
+    if(blob && ws && ws.readyState === 1){
+      const buf = await blob.arrayBuffer();
+      ws.send(buf);
+      framesSent++; framesWindow++; bytesWindow += buf.byteLength; lastBytesAt = performance.now();
+      $("statSent").textContent = framesSent;
+    }
+  }catch(_){}
+  finally{ inFlight = false; }
+}
+
+function updateRates(){
+  const now = performance.now();
+  const dt = (now - lastRateAt) / 1000;
+  if(dt >= 1){
+    $("statRate").textContent = (framesWindow / dt).toFixed(1) + "/s";
+    const kbps = (bytesWindow * 8 / 1000) / dt;
+    $("statUp").textContent = kbps >= 1000 ? (kbps/1000).toFixed(1)+" Mbps" : Math.round(kbps)+" kbps";
+    framesWindow = 0; bytesWindow = 0; lastRateAt = now;
+  }
+}
+setInterval(updateRates, 1000);
+
+async function requestWakeLock(){
+  try{
+    if("wakeLock" in navigator && !wakeLock){ wakeLock = await navigator.wakeLock.request("screen"); wakeLock.addEventListener("release", ()=>{ wakeLock=null; }); }
+  }catch(_){}
+}
+function releaseWakeLock(){ try{ wakeLock && wakeLock.release(); }catch(_){} wakeLock=null; }
+document.addEventListener("visibilitychange", ()=>{ if(document.visibilityState === "visible" && running){ requestWakeLock(); ping(); } });
+
+if("getBattery" in navigator){
+  navigator.getBattery().then(b=>{ const paint=()=>$("statBattery").textContent=Math.round(b.level*100)+"%"; paint(); b.addEventListener("levelchange",paint); }).catch(()=>{});
+}
+connectIngest();
+</script>
+</body>
+</html>

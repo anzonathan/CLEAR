@@ -30,10 +30,22 @@ class PlayerDetection:
 
 
 @dataclass
+class RacketDetection:
+    bbox: Tuple[float, float, float, float]  # (x1, y1, x2, y2)
+    conf: float
+    source: str = "yolo"
+
+
+@dataclass
 class FrameDetections:
     frame_idx: int
     balls: List[BallDetection] = field(default_factory=list)
     players: List[PlayerDetection] = field(default_factory=list)
+    rackets: List[RacketDetection] = field(default_factory=list)
+
+
+# Cache model instances: switching field cameras must not reload YOLO weights.
+_YOLO_CACHE: dict[tuple[str, str], object] = {}
 
 
 class HybridTennisDetector:
@@ -45,21 +57,27 @@ class HybridTennisDetector:
         yolo_weights: str = "yolov8n.pt",
         ball_conf_thresh: float = 0.20,
         player_conf_thresh: float = 0.35,
+        racket_conf_thresh: float = 0.25,
         ball_hsv_lower: Tuple[int, int, int] = (24, 95, 140),
         ball_hsv_upper: Tuple[int, int, int] = (46, 255, 255),
         min_ball_radius_px: int = 2,
         max_ball_radius_px: int = 18,
         use_3frame_temporal: bool = True,
+        device: str = "auto",
+        imgsz: int = 640,
     ) -> None:
         self.mode = mode
         self.yolo_weights = yolo_weights
         self.ball_conf_thresh = ball_conf_thresh
         self.player_conf_thresh = player_conf_thresh
+        self.racket_conf_thresh = racket_conf_thresh
         self.ball_hsv_lower = np.array(ball_hsv_lower, dtype=np.uint8)
         self.ball_hsv_upper = np.array(ball_hsv_upper, dtype=np.uint8)
         self.min_ball_radius_px = min_ball_radius_px
         self.max_ball_radius_px = max_ball_radius_px
         self.use_3frame_temporal = use_3frame_temporal
+        self.imgsz = int(imgsz)
+        self.device = self._resolve_device(device)
 
         self.gray_buffer: Deque[np.ndarray] = deque(maxlen=3)
         self.bg_subtractor = cv2.createBackgroundSubtractorMOG2(
@@ -69,6 +87,24 @@ class HybridTennisDetector:
         if self.mode in ("hybrid", "yolo"):
             self._try_load_yolo()
 
+    @staticmethod
+    def _resolve_device(device: str) -> str:
+        if device and device != "auto":
+            if device.startswith("cuda"):
+                try:
+                    import torch  # type: ignore
+                    if not torch.cuda.is_available():
+                        return "cpu"
+                except Exception:
+                    return "cpu"
+            return device
+        try:
+            import torch  # type: ignore
+
+            return "cuda" if torch.cuda.is_available() else "cpu"
+        except Exception:
+            return "cpu"
+
     def _try_load_yolo(self) -> None:
         try:
             from pathlib import Path
@@ -76,9 +112,21 @@ class HybridTennisDetector:
 
             # Only auto-load if weights file exists locally or mode explicitly forces download
             if Path(self.yolo_weights).exists() or self.mode == "yolo":
-                self.yolo_model = YOLO(self.yolo_weights)
+                key = (str(Path(self.yolo_weights).resolve()), self.device)
+                model = _YOLO_CACHE.get(key)
+                if model is None:
+                    model = YOLO(self.yolo_weights)
+                    _YOLO_CACHE[key] = model
+                self.yolo_model = model
         except Exception:
             self.yolo_model = None
+
+    def reset(self) -> None:
+        """Reset temporal state between camera switches."""
+        self.gray_buffer.clear()
+        self.bg_subtractor = cv2.createBackgroundSubtractorMOG2(
+            history=120, varThreshold=28, detectShadows=False
+        )
 
     def detect(
         self,
@@ -88,11 +136,19 @@ class HybridTennisDetector:
     ) -> FrameDetections:
         balls: List[BallDetection] = []
         players: List[PlayerDetection] = []
+        rackets: List[RacketDetection] = []
 
-        # 1. Optional YOLO pass (COCO class 0 = person, class 32 = sports ball)
+        # 1. Optional YOLO pass (COCO class 0 = person, 32 = sports ball, 38 = tennis racket)
         if self.yolo_model is not None and self.mode in ("hybrid", "yolo"):
             try:
-                results = self.yolo_model.predict(frame_bgr, verbose=False, conf=0.15)
+                results = self.yolo_model.predict(
+                    frame_bgr,
+                    verbose=False,
+                    conf=0.15,
+                    imgsz=self.imgsz,
+                    device=self.device,
+                    half=self.device == "cuda",
+                )
                 if results and len(results) > 0:
                     boxes = results[0].boxes
                     for box in boxes:
@@ -117,6 +173,14 @@ class HybridTennisDetector:
                                     source="yolo",
                                 )
                             )
+                        elif cls_id == 38 and conf >= self.racket_conf_thresh:
+                            rackets.append(
+                                RacketDetection(
+                                    bbox=(x1, y1, x2, y2),
+                                    conf=conf,
+                                    source="yolo",
+                                )
+                            )
             except Exception:
                 pass
 
@@ -134,7 +198,8 @@ class HybridTennisDetector:
 
         balls.sort(key=lambda b: b.conf, reverse=True)
         players.sort(key=lambda p: p.conf, reverse=True)
-        return FrameDetections(frame_idx=frame_idx, balls=balls, players=players)
+        rackets.sort(key=lambda r: r.conf, reverse=True)
+        return FrameDetections(frame_idx=frame_idx, balls=balls, players=players, rackets=rackets)
 
     def _detect_classical(
         self,

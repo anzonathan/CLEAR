@@ -5,6 +5,7 @@ from .detector import (
     FrameDetections,
     HybridTennisDetector,
     PlayerDetection,
+    RacketDetection,
 )
 
 __all__ = [
@@ -12,4 +13,5 @@ __all__ = [
     "FrameDetections",
     "HybridTennisDetector",
     "PlayerDetection",
+    "RacketDetection",
 ]

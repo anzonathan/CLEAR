@@ -111,6 +111,26 @@ python scripts/infer.py --video path/to/rally.mp4 --calib calib/session.json --o
 
 Inference writes an annotated video, a JSON file of bounce events (court coordinates, call, margin, confidence) and the running score.
 
+## 6b. Field-test console *(implemented)*
+
+`/field` is a separate live-testing console for player, racket, ball and court
+overlays. It is designed for a Coolify deployment on a GPU machine.
+
+- **Channels:** add phone-browser cameras or RTSP streams. Only one channel is
+  decoded and inferred at a time. Activating another channel stops the previous
+  worker.
+- **Phone camera:** open `/camera/<token>` on a phone over HTTPS, start the
+  camera, then activate that channel. The phone tab must stay open and awake.
+- **Detections:** COCO `person`, `sports ball`, `tennis racket` plus the
+  clay HSV/3-frame ball fallback.
+- **Court calibration:** per-camera manual 4-corner tap, auto painted-line
+  suggestion, or optional segmentation weights via
+  `CLEAR_COURT_SEG_WEIGHTS`.
+- **Outputs:** annotated live view, snapshots, and per-session JSONL detection
+  events under `/data/sessions/`.
+
+Deployment files: `Dockerfile`, `docker-compose.yml`, `docker-compose.cpu.yml`, `DEPLOY.md`, `deploy/coolify.md`.
+
 ## 7. Models
 
 | Model | Approach | Status |

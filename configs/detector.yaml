@@ -19,6 +19,7 @@ detector:
   imgsz: 640
   ball_conf_thresh: 0.20
   player_conf_thresh: 0.35
+  racket_conf_thresh: 0.25
   # HSV bounds for yellow/optic-green tennis ball on red/brown clay
   ball_hsv_lower: [20, 70, 120]
   ball_hsv_upper: [48, 255, 255]

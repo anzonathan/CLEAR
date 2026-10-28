@@ -4,15 +4,17 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import sys
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Dict, List, Literal, Optional, Tuple
+from urllib.parse import quote
 import cv2
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, HTMLResponse, Response
-from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
 from pydantic import BaseModel
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -23,8 +25,21 @@ from src.calibration.court_geometry import ANCHOR_COORDS_M, COURT_LINES_M, SPEC,
 from src.calibration.homography import CourtCalibrator
 from src.data.synthetic_rally import generate_synthetic_clay_rally
 from src.pipeline import ClearPipeline
+from App.field_api import manager as field_manager, router as field_router
+from App.field_auth import field_auth_enabled, protected_path, request_authenticated
 
-app = FastAPI(title="CLEAR: Clay-Court AI Referee Studio", version="0.1.0")
+
+@asynccontextmanager
+async def _lifespan(_app: FastAPI):
+    yield
+    field_manager.shutdown()
+
+
+app = FastAPI(
+    title="CLEAR: Clay-Court AI Referee Studio",
+    version="0.1.0",
+    lifespan=_lifespan,
+)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -33,13 +48,37 @@ app.add_middleware(
 )
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
-DATA_DIR = ROOT / "data"
-RESULTS_DIR = ROOT / "results"
-CALIB_PATH = ROOT / "calib" / "session.json"
+DATA_DIR = Path(os.getenv("CLEAR_DATA_DIR", str(ROOT / "data")))
+RESULTS_DIR = Path(os.getenv("CLEAR_RESULTS_DIR", str(ROOT / "results")))
+CALIB_PATH = Path(os.getenv("CLEAR_CALIB_PATH", str(ROOT / "calib" / "session.json")))
 
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 CALIB_PATH.parent.mkdir(parents=True, exist_ok=True)
+
+
+@app.middleware("http")
+async def field_auth_middleware(request, call_next):
+    """Optional shared-password gate for the field console and camera links."""
+    path = request.url.path
+    if (
+        field_auth_enabled()
+        and protected_path(path)
+        and path != "/field/login"
+        and not request_authenticated(request)
+    ):
+        if path.startswith("/api/") or path.startswith("/ws/"):
+            return JSONResponse({"detail": "Authentication required."}, status_code=401)
+        return RedirectResponse(f"/field/login?next={quote(path)}", status_code=303)
+    return await call_next(request)
+
+
+app.include_router(field_router)
+
+
+@app.get("/api/health")
+def health() -> Dict[str, object]:
+    return {"ok": True, "service": "clear", "field_ready": True}
 
 # Cache latest pipeline instance in memory for fast frame/telemetry queries
 _STATE_CACHE: Dict[str, object] = {}
@@ -306,6 +345,7 @@ def get_analytics_chart() -> FileResponse:
 
 
 if __name__ == "__main__":
+    import os
     import uvicorn
 
-    uvicorn.run(app, host="127.0.0.1", port=8000)
+    uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("PORT", "8000")))

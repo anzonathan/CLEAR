@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from typing import Dict, List, Literal, Optional, Tuple
+
 import cv2
 import numpy as np
 
@@ -75,7 +76,7 @@ def _side_sign(service_side: str) -> float:
 
 
 def _serve_stance_mid_x(service_side: str) -> float:
-    """Server stands ~0.9 m to the correct side of the centre mark (6.40 / 4.57)."""
+    """Server stands ~0.9 m to the correct side of the centre mark."""
     return SPEC.center_x_m + _side_sign(service_side) * 0.915
 
 
@@ -260,23 +261,15 @@ def generate_synthetic_clay_rally(
             next_frame = int(replay["f_end"]) + 1
 
     rally_start = next_frame
-
-
     rally_segments: List[Dict[str, object]] = []
 
     if include_rally:
-        # The serve's post-bounce endpoint is the returner's contact point.
-        # Each subsequent shot starts at the previous shot's endpoint.
+        # Use the last (legal) serve as the starting point for the rally.
         previous = serve_segments[-1]
 
         if serve_outcome == "legal" or (
-            serve_outcome == "let"
-            and len(serve_segments) > 1
+            serve_outcome == "let" and len(serve_segments) > 1
         ):
-            # For a let, use the legal replay as the active serve.
-            if serve_outcome == "let":
-                previous = serve_segments[-1]
-
             def make_groundstroke(
                 hitter_id: int,
                 start_xy: Tuple[float, float],
@@ -289,13 +282,12 @@ def generate_synthetic_clay_rally(
                 f_bounce = f_start + flight_frames
                 f_end = f_bounce + rebound_frames
 
-                # Rebound endpoint where the next player will intercept it
                 bx, by = bounce_xy
                 if hitter_id == 1:
-                    # P1 hit it toward far court, bounces at bounce_xy, rebounds toward P2
+                    # P1 hit toward far court → rebound continues toward P2
                     end_xy = (bx + (bx - start_xy[0]) * 0.2, max(1.5, by - 2.5))
                 else:
-                    # P2 hit it toward near court, bounces at bounce_xy, rebounds toward P1
+                    # P2 hit toward near court → rebound continues toward P1
                     end_xy = (bx + (bx - start_xy[0]) * 0.2, min(SPEC.length_m - 1.5, by + 2.5))
 
                 return {
@@ -303,21 +295,81 @@ def generate_synthetic_clay_rally(
                     "f_contact": f_start,
                     "f_bounce": f_bounce,
                     "f_end": f_end,
-                    "start_m": start_xy,       # Where the racket strikes the ball
-                    "bounce_m": bounce_xy,     # Where the ball hits the clay
-                    "end_m": end_xy,           # Peak of the rebound
-                    "start_z_m": 0.90,         # Racket contact height (meters)
-                    "peak_z_m": 1.85,          # Max arc height over the net (meters)
-                    "rebound_z_m": 0.75,       # Rebound height
+                    "start_m": start_xy,
+                    "bounce_m": bounce_xy,
+                    "end_m": end_xy,
+                    "start_z_m": 0.90,
+                    "peak_z_m": 1.85,
+                    "rebound_z_m": 0.75,
                     "hitter_id": hitter_id,
                     "is_serve": False,
                 }
 
+            # ----------------------------------------------------------------
+            # Build a short 4-shot rally
+            # ----------------------------------------------------------------
+            f = int(previous["f_end"]) + 1
+
+            # 1. P2 return (from far side)
+            start2 = previous["end_m"]
+            # Contact a little behind the far baseline for realism
+            start2 = (float(start2[0]), max(-0.4, float(start2[1]) - 0.3))
+            bounce2 = (SPEC.center_x_m + 1.9, SPEC.length_m - 3.8)
+            seg2 = make_groundstroke(
+                hitter_id=2,
+                start_xy=start2,
+                bounce_xy=bounce2,
+                f_start=f,
+                flight_frames=36,
+                rebound_frames=12,
+            )
+            rally_segments.append(seg2)
+            f = int(seg2["f_end"]) + 1
+
+            # 2. P1 cross-court
+            start1 = seg2["end_m"]
+            start1 = (float(start1[0]), min(SPEC.length_m + 0.4, float(start1[1]) + 0.3))
+            bounce1 = (SPEC.center_x_m - 2.3, 4.2)
+            seg1 = make_groundstroke(
+                hitter_id=1,
+                start_xy=start1,
+                bounce_xy=bounce1,
+                f_start=f,
+            )
+            rally_segments.append(seg1)
+            f = int(seg1["f_end"]) + 1
+
+            # 3. P2 down-the-line
+            start2b = seg1["end_m"]
+            start2b = (float(start2b[0]), max(-0.4, float(start2b[1]) - 0.3))
+            bounce2b = (SPEC.center_x_m + 2.5, SPEC.length_m - 2.9)
+            seg2b = make_groundstroke(
+                hitter_id=2,
+                start_xy=start2b,
+                bounce_xy=bounce2b,
+                f_start=f,
+            )
+            rally_segments.append(seg2b)
+            f = int(seg2b["f_end"]) + 1
+
+            # 4. P1 finishing shot
+            start1b = seg2b["end_m"]
+            start1b = (float(start1b[0]), min(SPEC.length_m + 0.4, float(start1b[1]) + 0.3))
+            bounce1b = (SPEC.center_x_m - 1.1, 6.8)
+            seg1b = make_groundstroke(
+                hitter_id=1,
+                start_xy=start1b,
+                bounce_xy=bounce1b,
+                f_start=f,
+                flight_frames=30,
+                rebound_frames=10,
+            )
+            rally_segments.append(seg1b)
 
     # Authoritative list of every ball trajectory.
     all_segments = [*serve_segments, *rally_segments]
 
-    last_end = max(int(seg["f_end"]) for seg in all_segments)
+    last_end = max(int(seg["f_end"]) for seg in all_segments) if all_segments else 0
     total_frames = last_end + 10
     if include_rally:
         total_frames = max(280, total_frames)
@@ -614,7 +666,7 @@ def _serve_p1_feet(
 ) -> Tuple[Tuple[float, float], Tuple[float, float]]:
     """P1 near-end serve stance. `local` = frames since the serve window started.
 
-    Near baseline is y = SPEC.length_m (23.77). A foot is legal while y > 23.77
+    Near baseline is y = SPEC.length_m (≈23.77). A foot is legal while y > 23.77
     BEFORE contact. After contact the server steps into the court, which is legal.
 
     legal : both feet behind the baseline until contact, then step in.
@@ -657,7 +709,6 @@ def _smoothstep(t: float) -> float:
     return t * t * (3.0 - 2.0 * t)
 
 
-
 def _interpolate_players(
     frame_idx: int,
     serve_segments: List[Dict[str, object]],
@@ -667,43 +718,48 @@ def _interpolate_players(
     Tuple[Tuple[float, float], Tuple[float, float]],
     Tuple[Tuple[float, float], Tuple[float, float]],
 ]:
-    """Interpolate players so they arrive at the ball strike location precisely at f_contact."""
+    """Interpolate players so they arrive at the ball strike location precisely at f_contact.
+
+    Both players begin **outside** the baselines.
+    """
     rally_segments = rally_segments or []
 
-    # Preserve P1's serve stance during serves
+    # ------------------------------------------------------------------
+    # P1 (near end)
+    # ------------------------------------------------------------------
     active = _serve_window(frame_idx, serve_segments)
     if active is not None:
         p1_left, p1_right = _serve_feet_at(active, frame_idx)
     else:
-        # Build precise movement keys for P1 during the rally
-        p1_keys = [(rally_start, (6.40, SPEC.length_m - 0.8))]
+        # Start well behind the near baseline
+        p1_keys = [(rally_start, (6.40, SPEC.length_m + 0.55))]
+
         for i, seg in enumerate(rally_segments):
             if int(seg["hitter_id"]) == 1:
-                # P1 hits this shot. P1 should move to the PREVIOUS shot's bounce 
-                # (where the ball arrives on P1's side) to hit it.
-                if i > 0:
-                    prev_bounce = rally_segments[i - 1]["bounce_m"]
-                    # Arrive at the ball 8 frames before contact to plant stance
-                    arrival_frame = int(seg["f_contact"]) - 8
-                    p1_keys.append((arrival_frame, (float(prev_bounce[0]), float(prev_bounce[1]))))
-                
-                # Plant/hit position
+                # Arrive a little early and plant outside, then step in to contact
+                arrival_frame = int(seg["f_contact"]) - 10
                 x, y = seg["start_m"]
+                # Plant position still slightly outside / on the baseline
+                plant_y = max(y, SPEC.length_m + 0.15)
+                p1_keys.append((arrival_frame, (float(x), plant_y)))
+                # Exact contact position
                 p1_keys.append((int(seg["f_contact"]), (float(x), float(y))))
 
         p1_keys.sort(key=lambda item: item[0])
         p1_left, p1_right = _split_feet(_interp_path(frame_idx, p1_keys))
 
-    # Build precise movement keys for P2 during the rally
-    p2_keys = [(0, (4.50, 1.00))]
+    # ------------------------------------------------------------------
+    # P2 (far end) – always starts outside (y < 0)
+    # ------------------------------------------------------------------
+    p2_keys = [(0, (4.50, -0.55))]   # outside the far baseline from the very first frame
+
     for seg in rally_segments:
         if int(seg["hitter_id"]) == 2:
-            # P2 hits this shot. P2 moves to the incoming ball bounce on the far side.
-            bounce_xy = seg["bounce_m"] # Or previous shot's end
-            arrival_frame = int(seg["f_contact"]) - 8
-            p2_keys.append((arrival_frame, (float(bounce_xy[0]), float(bounce_xy[1]) - 0.5)))
-            
+            arrival_frame = int(seg["f_contact"]) - 10
             x, y = seg["start_m"]
+            # Plant a little outside the far baseline
+            plant_y = min(y, -0.15)
+            p2_keys.append((arrival_frame, (float(x), plant_y)))
             p2_keys.append((int(seg["f_contact"]), (float(x), float(y))))
 
     p2_keys.sort(key=lambda item: item[0])
@@ -711,11 +767,14 @@ def _interpolate_players(
 
     return (p1_left, p1_right), (p2_left, p2_right)
 
+
 def _interp_path(
     frame_idx: int,
     keys: List[Tuple[int, Tuple[float, float]]],
 ) -> Tuple[float, float]:
     """Smoothstep interpolation through keyframes; clamps before the first / after the last."""
+    if not keys:
+        return (0.0, 0.0)
     if frame_idx <= keys[0][0]:
         return keys[0][1]
     for i in range(len(keys) - 1):

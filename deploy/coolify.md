@@ -7,12 +7,14 @@ nvidia-smi
 docker run --rm --gpus all nvidia/cuda:12.4.1-base-ubuntu22.04 nvidia-smi
 ```
 
-If the second command fails, install the NVIDIA driver and `nvidia-container-toolkit`, then configure Docker's NVIDIA runtime:
+If the second command fails (`could not select device driver "nvidia" with capabilities: [[gpu]]`), install the NVIDIA driver and `nvidia-container-toolkit`, then set `nvidia` as Docker's default runtime:
 
 ```bash
-sudo nvidia-ctk runtime configure --runtime=docker
+sudo nvidia-ctk runtime configure --runtime=docker --set-as-default
 sudo systemctl restart docker
 ```
+
+`docker-compose.yml` uses `CLEAR_DEVICE=auto` and `NVIDIA_VISIBLE_DEVICES=all` without a hard device reservation, so Coolify can still start the container on CPU if the NVIDIA runtime is not installed yet.
 
 ## 2. Coolify application
 
@@ -21,7 +23,8 @@ sudo systemctl restart docker
 - Branch: `main`
 - Base directory: `/` (the repository root containing `docker-compose.yml`)
 - Compose file: `/docker-compose.yml`
-- Domain: `https://clear.<your-subdomain>` -> service `clear-field`, internal port `8000`
+- Port: `8090` (published on host `8090:8090` so it never conflicts with Coolify on `8000`)
+- Ingress / Tunnel target: `http://localhost:8090` (or Coolify domain -> service `clear-field`, port `8090`)
 - Do not enable rolling updates. One replica only.
 - Persistent storage: compose-owned named volume `clear-data` mounted at `/data`.
 
@@ -42,9 +45,9 @@ sudo systemctl restart docker
 
 `CLEAR_YOLO_WEIGHTS` is fixed to `/app/models/yolov8n.pt`; the image bakes the COCO weights at build time.
 
-## 4. Cloudflare Tunnel
+## 4. Cloudflare Tunnel / Ingress
 
-Point the tunnel hostname at the Coolify proxy (normally `http://localhost:80` or the Coolify Traefik service). Keep WebSockets enabled. Cloudflare supports the long-lived camera ingest/view sockets, but make sure no proxy rule buffers `text/event-stream` or WebSocket traffic.
+Point your ingress / tunnel hostname (`clear.<your-subdomain>`) to `http://localhost:8090` (or `http://127.0.0.1:8090`). Keep WebSockets enabled. Cloudflare supports the long-lived camera ingest/view sockets, but make sure no proxy rule buffers `text/event-stream` or WebSocket traffic.
 
 ## 5. Phone camera
 
@@ -76,12 +79,12 @@ Coolify runtime logs show Uvicorn. Field snapshots and event logs are under `/da
 ## 8. Local test
 
 ```bash
-uv run uvicorn App.server:app --host 0.0.0.0 --port 8000
+uv run uvicorn App.server:app --host 0.0.0.0 --port 8090
 # or
 docker compose up --build
 ```
 
-Open `http://localhost:8000/field`.
+Open `http://localhost:8090/field`.
 
 ## Notes / limits
 

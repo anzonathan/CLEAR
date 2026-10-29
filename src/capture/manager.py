@@ -93,6 +93,7 @@ class FieldCameraRuntime:
             device=self.device,
             imgsz=self.imgsz,
         )
+        self.device = self.detector.device
         self.stop_event.clear()
         if self.source == "rtsp":
             self.reader_thread = threading.Thread(target=self._rtsp_loop, name=f"rtsp-{self.camera_id}", daemon=True)

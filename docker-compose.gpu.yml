@@ -1,0 +1,13 @@
+# Explicit NVIDIA device reservation override (requires nvidia-container-toolkit on host):
+# docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d
+services:
+  clear-field:
+    environment:
+      CLEAR_DEVICE: ${CLEAR_DEVICE:-cuda}
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]

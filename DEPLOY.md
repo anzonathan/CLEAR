@@ -27,19 +27,20 @@ Run these checks locally before pushing or deploying:
 # 1. Run full unit + integration + WebSocket test suite
 .venv/bin/pytest -v
 
-# 2. Validate Docker Compose manifests (GPU default + CPU override)
+# 2. Validate Docker Compose manifests (default, GPU explicit, CPU override)
 docker compose -f docker-compose.yml config
+docker compose -f docker-compose.yml -f docker-compose.gpu.yml config
 docker compose -f docker-compose.yml -f docker-compose.cpu.yml config
 
 # 3. Smoke-test Uvicorn production command locally
-.venv/bin/uvicorn App.server:app --host 127.0.0.1 --port 8000 --workers 1 --proxy-headers --forwarded-allow-ips "*"
+.venv/bin/uvicorn App.server:app --host 127.0.0.1 --port 8090 --workers 1 --proxy-headers --forwarded-allow-ips "*"
 ```
 
 Verify health endpoints:
 
 ```bash
-curl -fsS http://127.0.0.1:8000/api/health
-curl -fsS http://127.0.0.1:8000/api/field/health
+curl -fsS http://127.0.0.1:8090/api/health
+curl -fsS http://127.0.0.1:8090/api/field/health
 ```
 
 ---
@@ -53,12 +54,19 @@ nvidia-smi
 docker run --rm --gpus all nvidia/cuda:12.4.1-base-ubuntu22.04 nvidia-smi
 ```
 
-If Docker cannot access the GPU, install and configure `nvidia-container-toolkit`:
+If Docker fails with `Error response from daemon: could not select device driver "nvidia" with capabilities: [[gpu]]`, install `nvidia-container-toolkit` on the host and set `nvidia` as Docker's default runtime:
 
 ```bash
-sudo nvidia-ctk runtime configure --runtime=docker
+curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey | sudo gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg \
+  && curl -s -L https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list | \
+    sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' | \
+    sudo tee /etc/apt/sources.list.d/nvidia-container-toolkit.list
+sudo apt-get update && sudo apt-get install -y nvidia-container-toolkit
+sudo nvidia-ctk runtime configure --runtime=docker --set-as-default
 sudo systemctl restart docker
 ```
+
+> **Resilient Startup:** `docker-compose.yml` uses `CLEAR_DEVICE=auto` and `NVIDIA_VISIBLE_DEVICES=all` without a hard `driver: nvidia` reservation block. This guarantees Coolify can start the container even if `nvidia-container-toolkit` is not installed yet (automatically falling back to CPU), and automatically uses CUDA once `nvidia-ctk runtime configure --runtime=docker --set-as-default` is active.
 
 ---
 
@@ -72,10 +80,9 @@ sudo systemctl restart docker
    - **Base Directory:** `/`
    - **Docker Compose Location:** `/docker-compose.yml`
    - **Service:** `clear-field`
-   - **Internal Port:** `8000`
-   - **Domain:** `https://clear.<your-domain>`
+   - **Port:** `8090` (published as `${CLEAR_PORT:-8090}:8090`)
 3. **Important:** Keep replicas at `1` and disable rolling updates so two containers do not compete for the same camera stream.
-4. **Host port note:** `docker-compose.yml` exposes port `8000` internally on the Coolify Docker network and intentionally does **not** bind host port `8000` (avoiding conflict with Coolify's own dashboard on host port `8000`).
+4. **Port separation:** CLEAR runs on port `8090` (both host and container) so it never conflicts with Coolify's dashboard on port `8000`.
 
 ### 4.2 Environment Variables
 
@@ -83,8 +90,9 @@ Configure these in Coolify (see `deploy/.env.example`):
 
 | Variable | Default | Description |
 |---|---|---|
+| `CLEAR_PORT` | `8090` | Host port published by Docker Compose (`8090:8090`) |
 | `CLEAR_FIELD_PASSWORD` | *(empty)* | **Set in production.** Protects `/field`, `/camera/*`, `/api/field/*`, and `/ws/field/*` |
-| `CLEAR_DEVICE` | `cuda` | Inference device (`cuda`, `cpu`, or `auto`) |
+| `CLEAR_DEVICE` | `auto` | Inference device (`auto` uses `cuda` when available, otherwise `cpu`) |
 | `CLEAR_YOLO_IMGSZ` | `640` | YOLO input image size (`640` on GPU, `480` on CPU) |
 | `CLEAR_FIELD_TARGET_FPS` | `15` | Target inference FPS cap (`15` on GPU, `8` on CPU) |
 | `CLEAR_FIELD_JPEG_QUALITY` | `72` | Annotated stream JPEG quality (`1`–`100`) |
@@ -96,28 +104,30 @@ Configure these in Coolify (see `deploy/.env.example`):
 | `CLEAR_CALIB_PATH` | `/data/calib/session.json` | Studio default calibration file path |
 | `CLEAR_YOLO_WEIGHTS` | `/app/models/yolov8n.pt` | Pre-baked COCO weights inside container image |
 
-### 4.3 Cloudflare Tunnel & Reverse Proxy Notes
+### 4.3 Ingress / Cloudflare Tunnel Routing
 
-- Point your Cloudflare Tunnel public hostname (`clear.<your-domain>`) to the Coolify proxy (`http://localhost:80` or Traefik).
+- Point your Ingress / Cloudflare Tunnel hostname (`clear.<your-domain>`) directly to **`http://localhost:8090`** (or `http://127.0.0.1:8090`).
 - **HTTPS is mandatory** for phone cameras (`navigator.mediaDevices.getUserMedia` requires a secure context).
-- Ensure **WebSockets** are enabled in Cloudflare (`Network -> WebSockets -> ON`) and no proxy rule buffers `/ws/field/*`.
+- Ensure **WebSockets** are enabled (`Network -> WebSockets -> ON`) and no proxy rule buffers `/ws/field/*`.
 
 ---
 
 ## 5. Standalone Docker Compose Deployment (Without Coolify)
 
-### 5.1 GPU Host
+### 5.1 Default (Auto GPU/CPU)
 
 ```bash
 cp deploy/.env.example .env
 docker compose up -d --build
 ```
 
-*(If running without Coolify's reverse proxy and you need host port access, run with `-p 8000:8000` or add a `ports: ["8000:8000"]` override).*
+### 5.2 Explicit GPU Reservation Override
 
-### 5.2 CPU-Only Host / Laptop Fallback
+```bash
+docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d --build
+```
 
-Use `docker-compose.cpu.yml` to strip the NVIDIA GPU reservation and lower image size/FPS defaults:
+### 5.3 CPU-Only Override (Lower Resolution/FPS Defaults)
 
 ```bash
 docker compose -f docker-compose.yml -f docker-compose.cpu.yml up -d --build
@@ -177,6 +187,7 @@ With a channel active and streaming video, click **Calibrate**:
 
 | Symptom | Cause | Fix |
 |---|---|---|
+| `could not select device driver "nvidia" with capabilities: [[gpu]]` | Host Docker lacks `nvidia-container-toolkit` or GPU | Pull latest `docker-compose.yml` (no hard reservation) or run `sudo nvidia-ctk runtime configure --runtime=docker --set-as-default && sudo systemctl restart docker` on host |
 | Phone says `Camera requires HTTPS` | Opened via plain `http://<ip>` | Access `/camera/<token>` via `https://` domain or Cloudflare Tunnel |
 | Phone stays in `Standby` | Channel not activated in `/field` | Click **Activate** on the channel card in `/field` |
 | Phone link says `Camera link rejected` | Password changed or invalid token | Re-authenticate at `/field/login` and re-copy the phone link from `/field` |

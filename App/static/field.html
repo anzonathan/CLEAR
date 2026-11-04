@@ -104,6 +104,19 @@
   .events{font-family:var(--mono);font-size:10px;color:var(--muted);line-height:1.55;max-height:110px;overflow:auto;background:#0a111a;border:1px solid var(--line);border-radius:6px;padding:7px}
   .events div{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 
+  #recPill.on{background:rgba(248,113,113,.15);color:#f87171;border-color:rgba(248,113,113,.5)}
+  .recordings-list{display:flex;flex-direction:column;gap:12px}
+  .recording-card{border:1px solid var(--line);background:#0d1520;border-radius:8px;padding:12px}
+  .recording-card h4{margin:0 0 2px;font-size:13px;color:var(--text)}
+  .recording-card .rec-sub{font-size:10px;color:var(--muted);font-family:var(--mono);margin-bottom:8px}
+  .rec-file{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:7px 0;font-size:12px;color:var(--muted)}
+  .rec-file .fname{font-family:var(--mono);word-break:break-all}
+  .rec-file .fbtns{display:flex;gap:6px;flex:0 0 auto}
+  video.rec-preview{width:100%;max-height:240px;background:#000;border-radius:6px;border:1px solid var(--line)}
+  .upload-pill{font-size:9px;letter-spacing:.08em;text-transform:uppercase;font-weight:800;padding:3px 6px;border-radius:3px;border:1px solid #283a50;color:var(--muted)}
+  .upload-pill.uploaded{color:var(--ok);border-color:rgba(52,211,153,.4)}
+  .upload-pill.failed{color:var(--bad);border-color:rgba(248,113,113,.4)}
+
   .modal-backdrop{position:fixed;inset:0;background:rgba(2,6,12,.82);backdrop-filter:blur(4px);display:none;align-items:center;justify-content:center;padding:18px;z-index:40}
   .modal-backdrop.open{display:flex}
   .modal{width:min(96vw,760px);max-height:92vh;overflow:auto;background:var(--panel);border:1px solid #2b3d55;border-radius:10px;box-shadow:0 30px 80px rgba(0,0,0,.5)}
@@ -145,6 +158,7 @@
     </div>
     <div class="head-right">
       <div class="status-pill"><span class="dot" id="liveDot"></span><span id="liveText">STANDBY</span></div>
+      <button class="nav-link" onclick="openRecordings()" style="cursor:pointer">Recordings</button>
       <a class="nav-link" href="/">Analytics Studio</a>
     </div>
   </header>
@@ -153,7 +167,10 @@
     <section class="panel left-panel">
       <div class="panel-head">
         <span class="panel-title">Channels</span>
-        <button class="btn sm primary" onclick="openAddCamera()">+ Add</button>
+        <div style="display:flex;gap:6px">
+          <button class="btn sm" onclick="openMatchModal()">Match</button>
+          <button class="btn sm primary" onclick="openAddCamera()">+ Add</button>
+        </div>
       </div>
       <div class="camera-list" id="cameraList"><div class="empty">Loading channels…</div></div>
     </section>
@@ -162,6 +179,8 @@
       <div class="stage-head">
         <div class="stage-title"><span id="stageName">No channel active</span></div>
         <div style="display:flex;gap:6px">
+          <span class="pill" id="recPill" style="display:none">REC</span>
+          <button class="btn sm" id="recBtn" onclick="toggleRecord()" disabled>Record</button>
           <button class="btn sm" id="stopBtn" onclick="stopChannel()" disabled>Stop</button>
           <button class="btn sm" onclick="openCalibration()" id="calibBtn" disabled>Calibrate</button>
         </div>
@@ -197,6 +216,15 @@
           <div class="stat"><label>FPS</label><b id="statFps">0.0</b></div>
           <div class="stat"><label>Inference</label><b id="statMs">0 ms</b></div>
           <div class="stat"><label>Device</label><b id="statDevice">—</b></div>
+        </div>
+
+        <div class="section" id="radarSection" style="display:none">
+          <h3>Match radar (fused court)</h3>
+          <canvas id="radarCanvas" width="220" height="480" style="width:100%;height:auto;background:#0a111a;border:1px solid var(--line);border-radius:6px"></canvas>
+          <div class="row"><span>Ball speed</span><b id="radarBallSpeed">—</b></div>
+          <div class="row"><span>Ball (x, y)</span><b id="radarBallPos">—</b></div>
+          <div class="row"><span>P1 (near)</span><b id="radarP1">—</b></div>
+          <div class="row"><span>P2 (far)</span><b id="radarP2">—</b></div>
         </div>
 
         <div class="section">
@@ -238,9 +266,37 @@
         <select id="camSource" onchange="toggleRtsp()"><option value="browser">Phone browser</option><option value="rtsp">RTSP stream</option></select>
       </div>
       <div class="field" id="rtspField" style="display:none"><label>RTSP URL</label><input id="camRtsp" placeholder="rtsp://user:pass@host:554/stream"/></div>
+      <div class="field"><label>Court end (for match mode)</label>
+        <select id="camEnd"><option value="none">Not set</option><option value="end_a">End A (baseline y≈22)</option><option value="end_b">End B (baseline y≈1.8)</option></select>
+      </div>
       <p class="hint" id="sourceHint">Phone browser: open the generated link on a phone on the same tunnel. The tab must stay awake.</p>
     </div>
     <div class="modal-foot"><button class="btn" onclick="closeModal('addModal')">Cancel</button><button class="btn primary" onclick="createCamera()">Create channel</button></div>
+  </div>
+</div>
+
+<div class="modal-backdrop" id="matchModal">
+  <div class="modal small">
+    <div class="modal-head"><h2>Two-camera match mode</h2><button class="btn sm ghost" onclick="closeModal('matchModal')">Close</button></div>
+    <div class="modal-body">
+      <p class="hint">Two cameras at opposite ends, each close to one half of the court. Both feed one shared court track for the ball and both players.</p>
+      <div class="field"><label>End A camera (near-court player = P1)</label><select id="matchCamA"></select></div>
+      <div class="field"><label>End B camera (far-court player = P2)</label><select id="matchCamB"></select></div>
+      <div class="row"><span>Match status</span><b id="matchState">stopped</b></div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn danger" id="matchStopBtn" onclick="stopMatch()" style="display:none">Stop match</button>
+      <button class="btn primary" id="matchStartBtn" onclick="startMatch()">Start match</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-backdrop" id="recordingsModal">
+  <div class="modal">
+    <div class="modal-head"><h2>Recordings</h2><button class="btn sm ghost" onclick="closeModal('recordingsModal')">Close</button></div>
+    <div class="modal-body">
+      <div id="recordingsList" class="recordings-list"><div class="empty">No recordings yet.</div></div>
+    </div>
   </div>
 </div>
 
@@ -270,7 +326,7 @@
 <div class="toast-wrap" id="toasts"></div>
 
 <script>
-const state = {cameras: [], activeId: null, active: null, ws: null, reconnect: null, lastMetaAt: 0, calibMode: "manual", calibPoints: [], calibImage: null, calibCamera: null};
+const state = {cameras: [], activeId: null, active: null, ws: null, reconnect: null, lastMetaAt: 0, calibMode: "manual", calibPoints: [], calibImage: null, calibCamera: null, matchId: null, matchWs: null, fused: null, recording: false};
 const $ = id => document.getElementById(id);
 const wsProto = location.protocol === "https:" ? "wss:" : "ws:";
 
@@ -289,9 +345,11 @@ async function loadCameras(){
     const data = await api("/api/field/cameras");
     state.cameras = data.cameras || [];
     state.activeId = data.active_id;
+    state.matchId = data.match_id || null;
     state.active = state.cameras.find(c => c.id === state.activeId) || null;
     renderCameras();
     renderActive();
+    renderMatchState();
   }catch(err){ /* keep last view */ }
 }
 
@@ -320,12 +378,14 @@ function renderCameras(){
 
 function renderActive(){
   const cam = state.active;
-  $("stageName").textContent = cam ? cam.name : "No channel active";
+  const anyActive = state.cameras.some(c => c.active);
+  $("stageName").textContent = cam ? cam.name : (state.matchId ? "Match mode (" + state.cameras.filter(c=>c.active).map(c=>c.name).join(" + ") + ")" : "No channel active");
   $("stopBtn").disabled = !cam;
   $("calibBtn").disabled = !cam;
   $("calibOpenBtn").disabled = !cam;
   $("snapBtn").disabled = !cam;
   $("thApply").disabled = !cam;
+  $("recBtn").disabled = !anyActive && !state.recording;
   $("sourcePill").textContent = cam ? (cam.source === "browser" ? "PHONE" : "RTSP") : "—";
   $("liveDot").className = "dot" + (cam && cam.online ? " live" : "");
   $("liveText").textContent = cam ? (cam.online ? "LIVE" : "WAITING") : "STANDBY";
@@ -407,7 +467,7 @@ async function createCamera(){
   if(!name){ toast("Name required.","bad"); return; }
   if(source === "rtsp" && !rtsp){ toast("RTSP URL required.","bad"); return; }
   try{
-    const cam = await api("/api/field/cameras", {method:"POST", body: JSON.stringify({name, source, rtsp_url: rtsp})});
+    const cam = await api("/api/field/cameras", {method:"POST", body: JSON.stringify({name, source, rtsp_url: rtsp, end: $("camEnd").value})});
     closeModal("addModal"); $("camName").value=""; $("camRtsp").value="";
     await loadCameras();
     toast("Channel created.", "ok");
@@ -415,6 +475,81 @@ async function createCamera(){
   }catch(e){ toast(e.message,"bad"); }
 }
 async function copyPhone(id){ const cam = state.cameras.find(c=>c.id===id); if(!cam) return; const link = location.origin + cam.phone_path; try{ await navigator.clipboard.writeText(link); toast("Phone link copied.", "ok"); }catch(_){ prompt("Phone camera link", link); } }
+
+// ---------------------------------------------------------------- match mode
+function openMatchModal(){
+  const a = $("matchCamA"), b = $("matchCamB");
+  const opts = state.cameras.map(c => `<option value="${c.id}">${escapeHtml(c.name)} (${c.end||"no end"})</option>`).join("");
+  a.innerHTML = opts; b.innerHTML = opts;
+  const cur = state.matchId ? state.cameras.filter(c=>c.active) : [];
+  if(cur[0]) a.value = cur[0].id; if(cur[1]) b.value = cur[1].id;
+  renderMatchState();
+  $("matchModal").classList.add("open");
+}
+function renderMatchState(){
+  const running = !!state.matchId;
+  $("matchState").textContent = running ? ("running · " + state.matchId) : "stopped";
+  $("matchStartBtn").style.display = running ? "none" : "";
+  $("matchStopBtn").style.display = running ? "" : "none";
+  $("radarSection").style.display = running ? "" : "none";
+}
+async function startMatch(){
+  const a = $("matchCamA").value, b = $("matchCamB").value;
+  if(!a || !b || a === b){ toast("Pick two different cameras.","bad"); return; }
+  try{
+    const r = await api("/api/field/match", {method:"POST", body: JSON.stringify({camera_a_id:a, camera_b_id:b})});
+    state.matchId = r.match_id;
+    closeModal("matchModal");
+    toast("Match started.","ok");
+    connectMatch();
+    await loadCameras();
+  }catch(e){ toast(e.message,"bad"); }
+}
+async function stopMatch(){
+  try{ await api("/api/field/match/stop", {method:"POST"}); state.matchId = null; state.fused = null; disconnectMatch(); renderMatchState(); await loadCameras(); toast("Match stopped.","ok"); }
+  catch(e){ toast(e.message,"bad"); }
+}
+function connectMatch(){
+  disconnectMatch();
+  const ws = new WebSocket(`${wsProto}//${location.host}/ws/field/match`);
+  ws.onmessage = ev => {
+    let msg; try{ msg = JSON.parse(ev.data); }catch(_){ return; }
+    if(msg.type === "fused"){ state.fused = msg.fused; drawRadar(msg.fused); }
+    else if(msg.type === "state" && msg.active === false){ state.matchId = null; state.fused = null; renderMatchState(); }
+  };
+  ws.onclose = () => { if(state.matchId){ state.matchWs = null; } };
+  ws.onerror = () => {};
+  state.matchWs = ws;
+}
+function disconnectMatch(){ if(state.matchWs){ try{state.matchWs.onclose=null;state.matchWs.close();}catch(_){} state.matchWs=null; } }
+
+function drawRadar(fused){
+  const c = $("radarCanvas"), ctx = c.getContext("2d");
+  const W = c.width, H = c.height, m = 14;
+  ctx.clearRect(0,0,W,H);
+  // court: 10.97 x 23.77 m
+  const L = 10.97, LEN = 23.77;
+  const sx = (W-2*m)/L, sy = (H-2*m)/LEN;
+  const X = x_m => m + x_m*sx, Y = y_m => m + y_m*sy;
+  ctx.fillStyle = "#8a4b2d"; ctx.fillRect(X(0),Y(0),L*sx,LEN*sy);
+  ctx.strokeStyle = "#e2e8f0"; ctx.lineWidth = 1.5;
+  ctx.strokeRect(X(0),Y(0),L*sx,LEN*sy);
+  ctx.strokeStyle = "#ffe066"; ctx.lineWidth = 1.5;
+  ctx.beginPath(); ctx.moveTo(X(0),Y(11.885)); ctx.lineTo(X(L),Y(11.885)); ctx.stroke();
+  const trail = fused.ball_trail || [];
+  ctx.strokeStyle = "#fde047"; ctx.lineWidth = 2;
+  ctx.beginPath();
+  trail.forEach((p,i)=>{ if(i===0) ctx.moveTo(X(p[0]),Y(p[1])); else ctx.lineTo(X(p[0]),Y(p[1])); });
+  ctx.stroke();
+  const players = fused.players || {};
+  if(players["1"]){ ctx.fillStyle = "#38bdf8"; const p=players["1"]; ctx.beginPath(); ctx.arc(X(p.x_m),Y(p.y_m),6,0,Math.PI*2); ctx.fill(); }
+  if(players["2"]){ ctx.fillStyle = "#c084fc"; const p=players["2"]; ctx.beginPath(); ctx.arc(X(p.x_m),Y(p.y_m),6,0,Math.PI*2); ctx.fill(); }
+  if(fused.ball){ ctx.fillStyle = "#fde047"; const b=fused.ball; ctx.beginPath(); ctx.arc(X(b.x_m),Y(b.y_m),4,0,Math.PI*2); ctx.fill(); }
+  $("radarBallSpeed").textContent = fused.ball ? fused.ball.speed_kmh.toFixed(0) + " km/h" : "—";
+  $("radarBallPos").textContent = fused.ball ? fused.ball.x_m.toFixed(1) + ", " + fused.ball.y_m.toFixed(1) : "—";
+  $("radarP1").textContent = players["1"] ? players["1"].x_m.toFixed(1) + ", " + players["1"].y_m.toFixed(1) : "—";
+  $("radarP2").textContent = players["2"] ? players["2"].x_m.toFixed(1) + ", " + players["2"].y_m.toFixed(1) : "—";
+}
 
 document.querySelectorAll(".toggle").forEach(btn => btn.addEventListener("click", async () => {
   const cam = state.active; if(!cam) return;
@@ -537,9 +672,92 @@ async function loadEvents(){
 }
 function escapeHtml(str){ return String(str).replace(/[&<>"']/g, s=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[s])); }
 
+// ---------------------------------------------------------------- recordings
+async function toggleRecord(){
+  if(state.recording){ await stopRecording(); }
+  else{
+    const ids = state.cameras.filter(c=>c.active).map(c=>c.id);
+    if(!ids.length){ toast("Activate a camera or start a match first.","bad"); return; }
+    try{
+      await api("/api/field/record/start", {method:"POST", body: JSON.stringify({camera_ids: ids, name: ""})});
+      toast("Recording started.","ok");
+      updateRecordingState();
+    }catch(e){ toast(e.message,"bad"); }
+  }
+}
+async function stopRecording(){
+  try{ await api("/api/field/record/stop", {method:"POST"}); toast("Recording saved.","ok"); updateRecordingState(); }
+  catch(e){ toast(e.message,"bad"); }
+}
+async function updateRecordingState(){
+  try{
+    const r = await api("/api/field/record");
+    state.recording = !!r.recording;
+    const pill = $("recPill"), btn = $("recBtn");
+    if(state.recording){
+      pill.style.display = ""; pill.className = "pill on";
+      btn.textContent = "Stop Record"; btn.classList.add("danger"); btn.disabled = false;
+    }else{
+      pill.style.display = "none"; pill.className = "pill";
+      btn.textContent = "Record"; btn.classList.remove("danger");
+      btn.disabled = !state.cameras.some(c=>c.active);
+    }
+  }catch(_){}
+}
+async function openRecordings(){
+  $("recordingsModal").classList.add("open");
+  try{
+    const data = await api("/api/field/recordings");
+    renderRecordings(data.recordings || []);
+  }catch(e){ $("recordingsList").innerHTML = '<div class="empty">Could not load recordings.</div>'; }
+}
+function renderRecordings(list){
+  const wrap = $("recordingsList");
+  if(!list.length){ wrap.innerHTML = '<div class="empty">No recordings yet. Start a recording from the console.</div>'; return; }
+  wrap.innerHTML = list.map(rec => {
+    const files = [];
+    (rec.cameras || []).forEach(cam => {
+      (cam.files || []).forEach(f => {
+        files.push(`
+          <div class="rec-file">
+            <span class="fname">${escapeHtml(cam.camera_id)} · ${f.name} (${fmtBytes(f.bytes)})</span>
+            <span class="fbtns">
+              <button class="btn sm" onclick="togglePreview('${rec.id}','${f.filename}',this)">View</button>
+              <button class="btn sm" onclick="dlFile('${rec.id}','${f.filename}')">Download</button>
+            </span>
+          </div>
+          <div class="rec-preview-wrap" id="pv_${rec.id}_${f.filename}" style="display:none"></div>`);
+      });
+    });
+    return `<div class="recording-card">
+      <h4>${escapeHtml(rec.name)}</h4>
+      <div class="rec-sub">${escapeHtml(rec.id)} · ${(rec.created_at||"").slice(0,19).replace("T"," ")}</div>
+      ${files.join("")}
+      <div style="display:flex;justify-content:flex-end;margin-top:6px">
+        <button class="btn sm danger" onclick="deleteRecording('${rec.id}')">Delete</button>
+      </div>
+    </div>`;
+  }).join("");
+}
+function fmtBytes(n){ if(!n) return "0 B"; const u=["B","KB","MB","GB"]; let i=0; while(n>=1024&&i<u.length-1){n/=1024;i++;} return n.toFixed(1)+" "+u[i]; }
+function fileUrl(rid, filename){ return "/api/field/recordings/"+rid+"/file/"+encodeURIComponent(filename); }
+function togglePreview(rid, filename, btn){
+  const wrap = $("pv_"+rid+"_"+filename);
+  if(wrap.style.display !== "none"){ wrap.style.display = "none"; wrap.innerHTML = ""; btn.textContent = "View"; return; }
+  wrap.style.display = ""; wrap.innerHTML = `<video class="rec-preview" controls preload="metadata" src="${fileUrl(rid, filename)}"></video>`;
+  btn.textContent = "Hide";
+}
+function dlFile(rid, filename){ window.location.href = fileUrl(rid, filename) + "?dl=1"; }
+async function deleteRecording(rid){
+  if(!confirm("Delete this recording permanently?")) return;
+  try{ await api("/api/field/recordings/"+rid, {method:"DELETE"}); toast("Recording deleted.","ok"); openRecordings(); }
+  catch(e){ toast(e.message,"bad"); }
+}
+
 setInterval(loadCameras, 3000);
+setInterval(updateRecordingState, 2000);
 setInterval(()=>{ if(state.active) loadEvents(); }, 6000);
-loadCameras().then(()=>loadEvents());
+loadCameras().then(()=>{ loadEvents(); if(state.matchId) connectMatch(); updateRecordingState(); });
 </script>
 </body>
 </html>

@@ -197,6 +197,136 @@ def test_field_api_and_websocket_pipeline(tmp_path: Path, monkeypatch: pytest.Mo
         assert client.delete(f"/api/field/cameras/{cam_id}").status_code == 200
 
 
+def test_dual_camera_match_fusion(tmp_path: Path) -> None:
+    manager = FieldManager(tmp_path)
+    cam_a = manager.create_camera("End A", "browser")
+    cam_b = manager.create_camera("End B", "browser")
+    manager.update_camera(str(cam_a["id"]), end="end_a")
+    manager.update_camera(str(cam_b["id"]), end="end_b")
+
+    anchors = {
+        "far_left_doubles": [250.0, 120.0],
+        "far_right_doubles": [710.0, 120.0],
+        "near_right_doubles": [860.0, 470.0],
+        "near_left_doubles": [100.0, 470.0],
+    }
+    manager.save_calibration(str(cam_a["id"]), anchors, method="manual")
+    manager.save_calibration(str(cam_b["id"]), anchors, method="manual")
+
+    match = manager.start_match(str(cam_a["id"]), str(cam_b["id"]))
+    assert match is not None
+    assert manager.match_runtime is not None
+    assert set(manager.match_runtime.camera_ids) == {str(cam_a["id"]), str(cam_b["id"])}
+    assert manager.match_id.startswith("match_")
+
+    # Routing: frames now reach the match runtimes, not the single active slot.
+    jpeg = _make_synthetic_court_jpeg()
+    assert manager.submit_jpeg(str(cam_a["id"]), jpeg) is True
+    assert manager.submit_jpeg(str(cam_b["id"]), jpeg) is True
+
+    deadline = time.time() + 5.0
+    fused_idx = 0
+    while time.time() < deadline:
+        snap = manager.fused_snapshot()
+        fused_idx = int(snap.get("frame_index") or 0) if snap else 0
+        if fused_idx >= 1:
+            break
+        time.sleep(0.05)
+
+    assert fused_idx >= 1
+    stats = manager.match_stats()
+    assert stats is not None
+    assert "fused" in stats
+    assert set(stats["camera_ids"]) == {str(cam_a["id"]), str(cam_b["id"])}
+
+    # Cameras report active while in match mode.
+    assert manager.get_camera(str(cam_a["id"]))["active"] is True
+    assert manager.get_camera(str(cam_b["id"]))["active"] is True
+
+    manager.stop_match()
+    assert manager.match_runtime is None
+    assert manager.match_id is None
+
+
+def test_match_api_validation(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("CLEAR_FIELD_PASSWORD", raising=False)
+    temp_manager = FieldManager(tmp_path)
+    monkeypatch.setattr(field_api, "manager", temp_manager)
+    monkeypatch.setattr(server_mod, "field_manager", temp_manager)
+
+    with TestClient(app) as client:
+        cam_a = client.post("/api/field/cameras", json={"name": "A", "source": "browser", "end": "end_a"}).json()
+        cam_b = client.post("/api/field/cameras", json={"name": "B", "source": "browser", "end": "end_b"}).json()
+
+        # Same camera rejected
+        r_same = client.post("/api/field/match", json={"camera_a_id": cam_a["id"], "camera_b_id": cam_a["id"]})
+        assert r_same.status_code == 400
+
+        # Missing camera rejected
+        r_missing = client.post("/api/field/match", json={"camera_a_id": cam_a["id"], "camera_b_id": "nope"})
+        assert r_missing.status_code == 400
+
+        # Valid start + stop
+        r_start = client.post("/api/field/match", json={"camera_a_id": cam_a["id"], "camera_b_id": cam_b["id"]})
+        assert r_start.status_code == 200
+        assert r_start.json()["match_id"].startswith("match_")
+
+        r_get = client.get("/api/field/match")
+        assert r_get.status_code == 200
+        assert r_get.json()["match_id"] is not None
+
+        r_stop = client.post("/api/field/match/stop")
+        assert r_stop.status_code == 200
+        assert client.get("/api/field/match").json()["match_id"] is None
+
+
+def test_recording_session_writes_mp4s(tmp_path: Path) -> None:
+    manager = FieldManager(tmp_path)
+    cam = manager.create_camera("Rec Cam", "browser")
+    manager.activate(str(cam["id"]))
+
+    status = manager.start_recording([str(cam["id"])], name="Test rally")
+    assert status["recording"] is True
+    assert str(cam["id"]) in status["cameras"]
+
+    jpeg = _make_synthetic_court_jpeg()
+    for _ in range(5):
+        manager.submit_jpeg(str(cam["id"]), jpeg)
+
+    deadline = time.time() + 4.0
+    while time.time() < deadline:
+        if manager.recording and manager.recording.recorders[str(cam["id"])].frame_count >= 1:
+            break
+        time.sleep(0.05)
+
+    meta = manager.stop_recording()
+    assert "id" in meta
+
+    session_dir = tmp_path / "recordings" / meta["id"]
+    assert session_dir.exists()
+    raw_mp4 = session_dir / f"{cam['id']}_raw.mp4"
+    annot_mp4 = session_dir / f"{cam['id']}_annot.mp4"
+    assert raw_mp4.exists() and raw_mp4.stat().st_size > 100
+    assert annot_mp4.exists() and annot_mp4.stat().st_size > 100
+
+    recordings = manager.list_recordings()
+    assert len(recordings) >= 1
+    assert recordings[0]["id"] == meta["id"]
+    assert any(f["name"] in ("raw", "annotated") for c in recordings[0]["cameras"] for f in c["files"])
+
+    assert manager.delete_recording(meta["id"]) is True
+    assert not session_dir.exists()
+
+
+def test_record_start_requires_active_camera(tmp_path: Path) -> None:
+    manager = FieldManager(tmp_path)
+    cam = manager.create_camera("Offline", "browser")
+    import pytest as _pytest
+
+    with _pytest.raises(ValueError):
+        manager.start_recording([str(cam["id"])])
+
+
 def test_field_password_auth_gate(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("CLEAR_FIELD_PASSWORD", "ucu-secret-2026")
     temp_manager = FieldManager(tmp_path)

@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import os
+import secrets
 import threading
 import time
 from collections import deque
@@ -26,7 +27,9 @@ from src.calibration.court_geometry import COURT_LINES_M, SPEC
 from src.calibration.court_seg import detect_court_with_segmentation
 from src.calibration.homography import CourtCalibrator
 from src.capture.registry import CameraRegistry
+from src.capture.recorder import CameraRecorder, RecordingSession, get_recording, list_recordings
 from src.detect.detector import FrameDetections, HybridTennisDetector
+from src.track.match_fuser import FusedCameraInput, MatchFuser, project_fused_to_image
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -70,6 +73,8 @@ class FieldCameraRuntime:
         self.inference_ms = 0.0
         self.detections = {"person": 0, "racket": 0, "ball": 0}
         self.last_detections: Optional[FrameDetections] = None
+        self.fused_overlay: Dict[str, object] = {}
+        self.recorder: Optional[CameraRecorder] = None
         self.viewers = 0
         self.started_at = time.time()
         self.last_log_ts = 0.0
@@ -193,6 +198,11 @@ class FieldCameraRuntime:
             self.frame_index += 1
             self.processed_seq = seq
             annotated = self._render(frame, dets, camera, cal)
+            if self.recorder is not None:
+                try:
+                    self.recorder.write(frame, annotated)
+                except Exception:
+                    pass
             ok, buf = cv2.imencode(".jpg", annotated, [int(cv2.IMWRITE_JPEG_QUALITY), self.jpeg_quality])
             jpeg = buf.tobytes() if ok else None
             elapsed_ms = (time.perf_counter() - start) * 1000.0
@@ -274,8 +284,48 @@ class FieldCameraRuntime:
                 cv2.circle(out, (int(b.u), int(b.v)), radius, (40, 245, 255), 2, cv2.LINE_AA)
                 cv2.circle(out, (int(b.u), int(b.v)), 2, (255, 255, 255), -1, cv2.LINE_AA)
 
+        self._draw_fused_overlay(out, cal)
+
         self._draw_hud(out, camera, cal, dets)
         return out
+
+    def _draw_fused_overlay(self, out: np.ndarray, cal: Optional[CourtCalibrator]) -> None:
+        overlay = self.fused_overlay
+        if not overlay:
+            return
+        trail = overlay.get("trail") or []
+        for i in range(1, len(trail)):
+            p0 = trail[i - 1]
+            p1 = trail[i]
+            cv2.line(
+                out,
+                (int(round(p0[0])), int(round(p0[1]))),
+                (int(round(p1[0])), int(round(p1[1]))),
+                (0, 255, 128),
+                2,
+                cv2.LINE_AA,
+            )
+        ball = overlay.get("ball")
+        if ball is not None:
+            u, v, speed_kmh, is_pred = ball
+            cu, cv2v = int(round(u)), int(round(v))
+            cv2.drawMarker(out, (cu, cv2v), (60, 255, 160), cv2.MARKER_CROSS, 14, 2, cv2.LINE_AA)
+            cv2.circle(out, (cu, cv2v), 6, (60, 255, 160), 2, cv2.LINE_AA)
+            cv2.putText(
+                out,
+                f"FUSED {speed_kmh:.0f}kmh",
+                (cu + 10, cv2v - 6),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.42,
+                (60, 255, 160),
+                1,
+                cv2.LINE_AA,
+            )
+        for pid, label, u, v in overlay.get("players", []):
+            pu, pv = int(round(u)), int(round(v))
+            color = (255, 190, 40) if pid == 1 else (200, 130, 255)
+            cv2.drawMarker(out, (pu, pv), color, cv2.MARKER_TILTED_CROSS, 12, 2, cv2.LINE_AA)
+            cv2.putText(out, label, (pu + 8, pv - 6), cv2.FONT_HERSHEY_SIMPLEX, 0.42, color, 1, cv2.LINE_AA)
 
     def _draw_court(
         self,
@@ -447,6 +497,108 @@ class FieldCameraRuntime:
         return bool(self.last_frame_ts and time.time() - self.last_frame_ts < 5.0)
 
 
+class MatchRuntime:
+    """Two opposite-end field cameras active simultaneously, fused into one shared court track."""
+
+    def __init__(self, match_id: str, cameras: List[Dict[str, object]], data_dir: Path) -> None:
+        self.match_id = match_id
+        self.data_dir = data_dir
+        self.lock = threading.RLock()
+        self.stop_event = threading.Event()
+        self.runtimes: Dict[str, FieldCameraRuntime] = {}
+        for camera in cameras:
+            self.runtimes[str(camera["id"])] = FieldCameraRuntime(camera, data_dir)
+        self.camera_ids = list(self.runtimes.keys())
+        self.fps = max(1.0, float(os.getenv("CLEAR_FIELD_TARGET_FPS", "15")))
+        self.fuser = MatchFuser(fps=self.fps)
+        self.fusion_thread: Optional[threading.Thread] = None
+        self.started_at = time.time()
+
+    def start(self) -> None:
+        self.stop_event.clear()
+        for runtime in self.runtimes.values():
+            runtime.start()
+        self.fusion_thread = threading.Thread(target=self._fusion_loop, name=f"fuse-{self.match_id}", daemon=True)
+        self.fusion_thread.start()
+
+    def stop(self) -> None:
+        self.stop_event.set()
+        for runtime in self.runtimes.values():
+            runtime.stop()
+        if self.fusion_thread is not None and self.fusion_thread.is_alive():
+            self.fusion_thread.join(timeout=2.0)
+        self.fusion_thread = None
+
+    def _fusion_loop(self) -> None:
+        last_seen: Dict[str, int] = {cid: -1 for cid in self.camera_ids}
+        while not self.stop_event.is_set():
+            changed = False
+            for cid, rt in self.runtimes.items():
+                with rt.lock:
+                    idx = rt.frame_index
+                if idx != last_seen[cid]:
+                    last_seen[cid] = idx
+                    changed = True
+            if changed:
+                inputs: List[FusedCameraInput] = []
+                for cid, rt in self.runtimes.items():
+                    with rt.lock:
+                        dets = rt.last_detections
+                        cal = rt.calibrator
+                    if dets is not None:
+                        inputs.append(FusedCameraInput(camera_id=cid, dets=dets, calibrator=cal))
+                if inputs:
+                    self.fuser.update(inputs)
+                    for cid, rt in self.runtimes.items():
+                        with rt.lock:
+                            cal = rt.calibrator
+                        overlay = project_fused_to_image(self.fuser.latest, cal)
+                        with rt.lock:
+                            rt.fused_overlay = overlay
+            time.sleep(0.02)
+
+    def fused_snapshot(self) -> Dict[str, object]:
+        return self.fuser.snapshot()
+
+    def submit_jpeg(self, camera_id: str, payload: bytes) -> bool:
+        runtime = self.runtimes.get(camera_id)
+        if runtime is None:
+            return False
+        return runtime.submit_jpeg(payload)
+
+    def heartbeat(self, camera_id: str) -> None:
+        runtime = self.runtimes.get(camera_id)
+        if runtime is not None:
+            runtime.heartbeat()
+
+    def set_ingest_connected(self, camera_id: str, connected: bool) -> None:
+        runtime = self.runtimes.get(camera_id)
+        if runtime is not None:
+            runtime.set_ingest_connected(connected)
+
+    def snapshot_jpeg(self, camera_id: str, raw: bool = False) -> Optional[bytes]:
+        runtime = self.runtimes.get(camera_id)
+        if runtime is None:
+            return None
+        return runtime.snapshot_jpeg(raw=raw)
+
+    def viewer_count(self, camera_id: str, delta: int) -> int:
+        runtime = self.runtimes.get(camera_id)
+        if runtime is None:
+            return 0
+        with runtime.lock:
+            runtime.viewers = max(0, runtime.viewers + delta)
+            return runtime.viewers
+
+    def stats(self) -> Dict[str, object]:
+        return {
+            "match_id": self.match_id,
+            "camera_ids": self.camera_ids,
+            "cameras": {cid: rt.stats() for cid, rt in self.runtimes.items()},
+            "fused": self.fuser.snapshot(),
+        }
+
+
 class FieldManager:
     def __init__(self, data_dir: str | Path) -> None:
         self.data_dir = Path(data_dir)
@@ -455,8 +607,22 @@ class FieldManager:
         self._switch_lock = threading.Lock()
         self.active_id: Optional[str] = None
         self.runtime: Optional[FieldCameraRuntime] = None
+        self.match_runtime: Optional[MatchRuntime] = None
+        self.match_id: Optional[str] = None
+        self.recording: Optional[RecordingSession] = None
+        self._record_lock = threading.Lock()
         self._heartbeats: Dict[str, float] = {}
         self._ingest_connected: Dict[str, bool] = {}
+
+    # ------------------------------------------------------------------ routing
+    def _runtime_for(self, camera_id: str) -> Optional[FieldCameraRuntime]:
+        if self.match_runtime is not None:
+            rt = self.match_runtime.runtimes.get(camera_id)
+            if rt is not None:
+                return rt
+        if self.active_id == camera_id and self.runtime is not None:
+            return self.runtime
+        return None
 
     # ------------------------------------------------------------------ cameras
     def list_cameras(self) -> List[Dict[str, object]]:
@@ -465,8 +631,9 @@ class FieldManager:
         for camera in cameras:
             camera = dict(camera)
             camera["phone_path"] = f"/camera/{camera['token']}"
-            if self.active_id == camera["id"] and self.runtime is not None:
-                camera.update(self.runtime.stats())
+            runtime = self._runtime_for(str(camera["id"]))
+            if runtime is not None:
+                camera.update(runtime.stats())
             else:
                 camera.update(
                     {
@@ -490,8 +657,9 @@ class FieldManager:
             return None
         camera = dict(camera)
         camera["phone_path"] = f"/camera/{camera['token']}"
-        if self.active_id == camera_id and self.runtime is not None:
-            camera.update(self.runtime.stats())
+        runtime = self._runtime_for(camera_id)
+        if runtime is not None:
+            camera.update(runtime.stats())
         else:
             camera.update(
                 {
@@ -550,23 +718,26 @@ class FieldManager:
         updated = self.registry.update(camera_id, **changes)
         if updated is None:
             return None
-        if self.active_id == camera_id and self.runtime is not None:
-            with self.runtime.lock:
-                self.runtime.camera.update(updated)
+        runtime = self._runtime_for(camera_id)
+        if runtime is not None:
+            with runtime.lock:
+                runtime.camera.update(updated)
                 if "court_mode" in changes or "overlays" in changes:
-                    self.runtime.camera["court_mode"] = updated["court_mode"]
-                    self.runtime.camera["overlays"] = updated["overlays"]
-                if "detector" in changes and self.runtime.detector is not None:
+                    runtime.camera["court_mode"] = updated["court_mode"]
+                    runtime.camera["overlays"] = updated["overlays"]
+                if "detector" in changes and runtime.detector is not None:
                     det_cfg = updated.get("detector", {})
                     if isinstance(det_cfg, dict):
-                        self.runtime.detector.player_conf_thresh = float(det_cfg.get("person", 0.35))
-                        self.runtime.detector.racket_conf_thresh = float(det_cfg.get("racket", 0.25))
-                        self.runtime.detector.ball_conf_thresh = float(det_cfg.get("ball", 0.18))
+                        runtime.detector.player_conf_thresh = float(det_cfg.get("person", 0.35))
+                        runtime.detector.racket_conf_thresh = float(det_cfg.get("racket", 0.25))
+                        runtime.detector.ball_conf_thresh = float(det_cfg.get("ball", 0.18))
         return self.get_camera(camera_id)
 
     def delete_camera(self, camera_id: str) -> bool:
         if self.active_id == camera_id:
             self.deactivate()
+        if self.match_runtime is not None and camera_id in self.match_runtime.camera_ids:
+            self.stop_match()
         return self.registry.delete(camera_id)
 
     # ------------------------------------------------------------------ active channel
@@ -578,6 +749,7 @@ class FieldManager:
             if self.active_id == camera_id and self.runtime is not None:
                 return self.get_camera(camera_id)
             self._stop_runtime()
+            self._stop_match()
             runtime = FieldCameraRuntime(camera, self.data_dir)
             with self._lock:
                 self.active_id = camera_id
@@ -597,31 +769,152 @@ class FieldManager:
     def deactivate(self) -> None:
         with self._switch_lock:
             self._stop_runtime()
+            self._stop_match()
 
     def shutdown(self) -> None:
         with self._switch_lock:
             self._stop_runtime()
+            self._stop_match()
+            if self.recording is not None:
+                session = self.recording
+                self.recording = None
+                for recorder in session.recorders.values():
+                    recorder.finalize()
+                session.finalize()
+
+    # ------------------------------------------------------------------ match
+    def start_match(self, camera_a_id: str, camera_b_id: str) -> Optional[Dict[str, object]]:
+        if camera_a_id == camera_b_id:
+            raise ValueError("A match needs two different cameras.")
+        cameras: List[Dict[str, object]] = []
+        for camera_id in (camera_a_id, camera_b_id):
+            camera = self.registry.get(camera_id)
+            if camera is None:
+                raise ValueError(f"Camera not found: {camera_id}")
+            cameras.append(camera)
+        with self._switch_lock:
+            self._stop_runtime()
+            self._stop_match()
+            match_id = f"match_{secrets.token_hex(4)}"
+            runtime = MatchRuntime(match_id, cameras, self.data_dir)
+            with self._lock:
+                self.match_id = match_id
+                self.match_runtime = runtime
+            runtime.start()
+            return runtime.stats()
+
+    def stop_match(self) -> None:
+        with self._switch_lock:
+            self._stop_match()
+
+    def _stop_match(self) -> None:
+        old: Optional[MatchRuntime]
+        with self._lock:
+            old = self.match_runtime
+            self.match_runtime = None
+            self.match_id = None
+        if old is not None:
+            old.stop()
+
+    def match_stats(self) -> Optional[Dict[str, object]]:
+        if self.match_runtime is None:
+            return None
+        return self.match_runtime.stats()
+
+    def fused_snapshot(self) -> Optional[Dict[str, object]]:
+        if self.match_runtime is None:
+            return None
+        return self.match_runtime.fused_snapshot()
+
+    # ------------------------------------------------------------------ recording
+    def start_recording(self, camera_ids: List[str], name: str = "") -> Dict[str, object]:
+        with self._record_lock:
+            if self.recording is not None:
+                raise ValueError("A recording is already in progress.")
+            if not camera_ids:
+                raise ValueError("At least one camera is required.")
+            runtimes: Dict[str, FieldCameraRuntime] = {}
+            for camera_id in camera_ids:
+                runtime = self._runtime_for(camera_id)
+                if runtime is None:
+                    raise ValueError(f"Camera not active: {camera_id}")
+                runtimes[camera_id] = runtime
+            session_id = f"rec_{secrets.token_hex(4)}"
+            session_name = name.strip() or f"Recording {datetime.now().strftime('%Y-%m-%d %H:%M')}"
+            session = RecordingSession(session_id, session_name, self.data_dir, fps=self._target_fps())
+            for camera_id, runtime in runtimes.items():
+                recorder = session.add_camera(camera_id)
+                runtime.recorder = recorder
+            self.recording = session
+            return self.recording_status()
+
+    def stop_recording(self) -> Dict[str, object]:
+        with self._record_lock:
+            if self.recording is None:
+                raise ValueError("No recording in progress.")
+            session = self.recording
+            self.recording = None
+            for camera_id, recorder in session.recorders.items():
+                runtime = self._runtime_for(camera_id)
+                if runtime is not None:
+                    runtime.recorder = None
+        meta = session.finalize()
+        return self.get_recording(session.id) or meta
+
+    def recording_status(self) -> Dict[str, object]:
+        if self.recording is None:
+            return {"recording": False}
+        return {
+            "recording": True,
+            "id": self.recording.id,
+            "name": self.recording.name,
+            "cameras": list(self.recording.recorders.keys()),
+            "frames": {cid: r.frame_count for cid, r in self.recording.recorders.items()},
+        }
+
+    def list_recordings(self) -> List[Dict[str, object]]:
+        return list_recordings(self.data_dir)
+
+    def get_recording(self, session_id: str) -> Optional[Dict[str, object]]:
+        return get_recording(self.data_dir, session_id)
+
+    def delete_recording(self, session_id: str) -> bool:
+        meta = get_recording(self.data_dir, session_id)
+        if meta is None:
+            return False
+        session = RecordingSession(session_id, meta.get("name", ""), self.data_dir, fps=float(meta.get("fps", 15)))
+        session.delete()
+        return True
+
+    def _target_fps(self) -> float:
+        return max(1.0, float(os.getenv("CLEAR_FIELD_TARGET_FPS", "15")))
+
+    def _recording_detail(self, session_id: str) -> Optional[Dict[str, object]]:
+        return self.get_recording(session_id)
 
     # ------------------------------------------------------------------ ingest
     def heartbeat(self, camera_id: str) -> None:
         self._heartbeats[camera_id] = time.time()
         self._ingest_connected[camera_id] = True
-        if self.active_id == camera_id and self.runtime is not None:
-            self.runtime.heartbeat()
+        runtime = self._runtime_for(camera_id)
+        if runtime is not None:
+            runtime.heartbeat()
 
     def set_ingest_connected(self, camera_id: str, connected: bool) -> None:
         self._ingest_connected[camera_id] = bool(connected)
         if connected:
             self._heartbeats[camera_id] = time.time()
-        if self.active_id == camera_id and self.runtime is not None:
-            self.runtime.set_ingest_connected(connected)
+        runtime = self._runtime_for(camera_id)
+        if runtime is not None:
+            runtime.set_ingest_connected(connected)
 
     def submit_jpeg(self, camera_id: str, payload: bytes) -> bool:
-        if self.active_id != camera_id or self.runtime is None:
+        runtime = self._runtime_for(camera_id)
+        if runtime is None:
             return False
         self._heartbeats[camera_id] = time.time()
         self._ingest_connected[camera_id] = True
-        return self.runtime.submit_jpeg(payload)
+        return runtime.submit_jpeg(payload)
 
     def _inactive_online(self, camera_id: str) -> bool:
         if self._ingest_connected.get(camera_id):
@@ -704,8 +997,9 @@ class FieldManager:
 
     # ------------------------------------------------------------------ snapshots
     def snapshot_jpeg(self, camera_id: str, raw: bool = False) -> Optional[bytes]:
-        if self.active_id == camera_id and self.runtime is not None:
-            return self.runtime.snapshot_jpeg(raw=raw)
+        runtime = self._runtime_for(camera_id)
+        if runtime is not None:
+            return runtime.snapshot_jpeg(raw=raw)
         return None
 
     def save_snapshot(self, camera_id: str, raw: bool = False) -> Optional[Path]:
@@ -718,7 +1012,7 @@ class FieldManager:
         stamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")[:-3]
         path = shots / f"{stamp}{'_raw' if raw else ''}.jpg"
         path.write_bytes(jpeg)
-        runtime = self.runtime
+        runtime = self._runtime_for(camera_id)
         detections = dict(runtime.detections) if runtime is not None else {}
         line = {
             "ts": datetime.now(timezone.utc).isoformat(),
@@ -734,10 +1028,11 @@ class FieldManager:
 
     # ------------------------------------------------------------------ stats
     def viewer_count(self, camera_id: str, delta: int) -> int:
-        if self.active_id == camera_id and self.runtime is not None:
-            with self.runtime.lock:
-                self.runtime.viewers = max(0, self.runtime.viewers + delta)
-                return self.runtime.viewers
+        runtime = self._runtime_for(camera_id)
+        if runtime is not None:
+            with runtime.lock:
+                runtime.viewers = max(0, runtime.viewers + delta)
+                return runtime.viewers
         return 0
 
     def active_stats(self) -> Optional[Dict[str, object]]:

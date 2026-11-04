@@ -18,6 +18,7 @@ from typing import Dict, List, Optional
 SOURCES = ("browser", "rtsp")
 CALIB_METHODS = ("manual", "auto", "segmentation")
 COURT_MODES = ("singles", "doubles")
+ENDS = ("none", "end_a", "end_b")
 
 
 class CameraRegistry:
@@ -51,6 +52,9 @@ class CameraRegistry:
             source = "browser"
         overlays = item.get("overlays") if isinstance(item.get("overlays"), dict) else {}
         detector = item.get("detector") if isinstance(item.get("detector"), dict) else {}
+        end = str(item.get("end") or "none")
+        if end not in ENDS:
+            end = "none"
         return {
             "id": str(item.get("id")),
             "name": str(item.get("name") or "Untitled camera"),
@@ -59,6 +63,7 @@ class CameraRegistry:
             "token": str(item.get("token") or secrets.token_urlsafe(24)),
             "court_mode": str(item.get("court_mode") or "singles"),
             "calib_method": str(item.get("calib_method") or "manual"),
+            "end": end,
             "created_at": float(item.get("created_at") or time.time()),
             "overlays": {
                 "person": bool(overlays.get("person", True)),
@@ -112,7 +117,7 @@ class CameraRegistry:
             if current is None:
                 return None
             merged = dict(current)
-            for key in ("name", "source", "rtsp_url", "court_mode", "calib_method"):
+            for key in ("name", "source", "rtsp_url", "court_mode", "calib_method", "end"):
                 if key in changes and changes[key] is not None:
                     merged[key] = changes[key]
             if "overlays" in changes and isinstance(changes["overlays"], dict):

@@ -1,6 +1,0 @@
-device,likely_model,camera,lens,focal_35mm,aperture,sensor,pixel_um,megapixels,fov_deg,stabilization,video_modes,approx_focal_px_1080p
-iPhone,iPhone 13 (dual camera; confirm),rear,main (wide),26,f/1.6,1/1.9in,1.7,12,~69 horiz,sensor-shift OIS,"4K@24/25/30/60, 1080p@25/30/60/120/240",1387
-iPhone,iPhone 13 (dual camera; confirm),rear,ultrawide,13,f/2.4,1/3.4in,1.0,12,120,none (EIS in video),"4K@24/25/30/60, 1080p@25/30/60/120/240",693
-Android,Samsung Galaxy S20 FE,rear,main (wide),26,f/1.8,1/1.76in,1.8,12,~69 horiz,OIS + gyro-EIS,"4K@30/60",1387
-Android,Samsung Galaxy S20 FE,rear,telephoto 3x,76,f/2.4,1/4.5in,1.0,8,~26 horiz,OIS,"4K@30/60",4053
-Android,Samsung Galaxy S20 FE,rear,ultrawide,13,f/2.2,1/3.0in,1.12,12,123,gyro-EIS,"4K@30/60",693

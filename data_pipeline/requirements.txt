@@ -1,0 +1,8 @@
+opencv-python-headless
+numpy
+pandas
+scipy
+albumentations
+pillow
+pillow-heif
+jupyter

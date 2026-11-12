@@ -37,9 +37,10 @@ export class WebRTCClient {
   async start(localStream: MediaStream) {
     this.localStream = localStream;
 
-    // Connect to signaling server
-    const wsUrl = (import.meta.env.VITE_WS_URL ?? "ws://localhost:3030") + "/ws/signaling";
-    this.ws = new WebSocket(wsUrl);
+    // Connect to signaling server - use relative URL based on current location
+    const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+    const wsUrl = import.meta.env.VITE_WS_URL ?? `${protocol}//${window.location.host}`;
+    this.ws = new WebSocket(`${wsUrl}/ws/signaling`);
 
     this.ws.onopen = () => {
       console.log("Signaling connected");

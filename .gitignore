@@ -5,6 +5,8 @@ __pycache__/
 .ruff_cache/
 .mypy_cache/
 .DS_Store
+.env
+node_modules/
 
 # Runtime field data: never commit camera tokens, snapshots or session logs.
 data/cameras.json

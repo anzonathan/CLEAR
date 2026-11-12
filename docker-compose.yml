@@ -1,8 +1,41 @@
 services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: clear-postgres
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: clear
+      POSTGRES_PASSWORD: clear_dev_password
+      POSTGRES_DB: clear
+    volumes:
+      - clear_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U clear -d clear"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  auth:
+    build: ./auth-server
+    container_name: clear-auth
+    ports:
+      - "3030:3030"
+    env_file:
+      - ./auth-server/.env
+    environment:
+      DATABASE_URL: postgres://clear:clear_dev_password@postgres:5432/clear
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
   clear-field:
     build:
       context: .
       dockerfile: Dockerfile
+    container_name: clear-cv
     restart: unless-stopped
     shm_size: 1gb
     ports:
@@ -24,6 +57,9 @@ services:
       NVIDIA_DRIVER_CAPABILITIES: compute,utility
     volumes:
       - clear-data:/data
+    depends_on:
+      postgres:
+        condition: service_healthy
     healthcheck:
       test:
         - CMD
@@ -35,5 +71,16 @@ services:
       retries: 3
       start_period: 25s
 
+  web:
+    build: ./web
+    container_name: clear-web
+    ports:
+      - "8443:80"
+    depends_on:
+      - auth
+      - clear-field
+    restart: unless-stopped
+
 volumes:
+  clear_postgres_data:
   clear-data:

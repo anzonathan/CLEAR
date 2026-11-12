@@ -1,0 +1,10 @@
+{
+  "description": "Explore a complete mobile design system with light and dark components, layout guidelines, and annotated wireframes to plan consistent app experiences.",
+  "robots": {
+    "index": false
+  },
+  "accessibility": {
+    "addBypassLinks": false,
+    "ignoreReducedMotion": false
+  }
+}

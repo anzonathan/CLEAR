@@ -10,9 +10,18 @@ CREATE TABLE IF NOT EXISTS "user" (
   email_verified BOOLEAN DEFAULT FALSE,
   image TEXT,
   role TEXT DEFAULT 'user',
+  gender TEXT,
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
+
+-- Add gender column if it doesn't exist (for existing databases)
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'user' AND column_name = 'gender') THEN
+    ALTER TABLE "user" ADD COLUMN gender TEXT;
+  END IF;
+END $$;
 
 CREATE TABLE IF NOT EXISTS session (
   id TEXT PRIMARY KEY,

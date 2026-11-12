@@ -9,6 +9,7 @@ export default function AuthScreen() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [name, setName] = useState("");
+  const [gender, setGender] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
 
@@ -19,7 +20,7 @@ export default function AuthScreen() {
     const { error } =
       mode === "signin"
         ? await authClient.signIn.email({ email, password })
-        : await authClient.signUp.email({ email, password, name });
+        : await authClient.signUp.email({ email, password, name, gender });
     setBusy(false);
     if (error) {
       setError(error.message ?? "Something went wrong");
@@ -54,12 +55,30 @@ export default function AuthScreen() {
           </p>
         </div>
         {mode === "signup" && (
-          <Field
-            label="Full name"
-            placeholder="Alex Morgan"
-            value={name}
-            onChange={setName}
-          />
+          <>
+            <Field
+              label="Full name"
+              placeholder="Alex Morgan"
+              value={name}
+              onChange={setName}
+            />
+            <label className="field">
+              <span>Gender</span>
+              <span className="input-shell">
+                <select
+                  value={gender}
+                  onChange={(e) => setGender(e.target.value)}
+                  aria-label="Gender"
+                >
+                  <option value="">Select gender</option>
+                  <option value="male">Male</option>
+                  <option value="female">Female</option>
+                  <option value="other">Other</option>
+                  <option value="prefer_not_to_say">Prefer not to say</option>
+                </select>
+              </span>
+            </label>
+          </>
         )}
         <Field
           label="Email address"

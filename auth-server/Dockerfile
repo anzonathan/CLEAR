@@ -14,4 +14,4 @@ RUN pnpm install
 COPY . .
 
 EXPOSE 3030
-CMD ["pnpm", "start"]
+CMD ["sh", "-c", "pnpm db:migrate && pnpm start"]

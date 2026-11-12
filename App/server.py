@@ -64,12 +64,12 @@ async def field_auth_middleware(request, call_next):
     if (
         field_auth_enabled()
         and protected_path(path)
-        and path != "/field/login"
+        and path not in ("/login", "/field/login")
         and not request_authenticated(request)
     ):
         if path.startswith("/api/") or path.startswith("/ws/"):
             return JSONResponse({"detail": "Authentication required."}, status_code=401)
-        return RedirectResponse(f"/field/login?next={quote(path)}", status_code=303)
+        return RedirectResponse(f"/login?next={quote(path)}", status_code=303)
     return await call_next(request)
 
 
@@ -217,6 +217,12 @@ def _update_cache(pipeline: ClearPipeline, report: Dict[str, object], video_path
 @app.get("/", response_class=HTMLResponse)
 def index() -> HTMLResponse:
     html_file = STATIC_DIR / "index.html"
+    return HTMLResponse(html_file.read_text(encoding="utf-8"))
+
+
+@app.get("/admin", response_class=HTMLResponse)
+def admin_dashboard() -> HTMLResponse:
+    html_file = STATIC_DIR / "admin.html"
     return HTMLResponse(html_file.read_text(encoding="utf-8"))
 
 

@@ -72,17 +72,31 @@ def field_page() -> HTMLResponse:
 
 
 @router.get("/field/login", response_class=HTMLResponse)
-def login_page(request: Request, next: str = "/field") -> Response:
+def field_login_page(request: Request, next: str = "/field") -> Response:
+    return login_page(request, next)
+
+
+@router.post("/field/login")
+def field_login_submit(
+    request: Request,
+    password: str = Form(...),
+    next: str = Form("/field"),
+) -> Response:
+    return login_submit(request, password, next)
+
+
+@router.get("/login", response_class=HTMLResponse)
+def login_page(request: Request, next: str = "/") -> Response:
     if not field_auth_enabled() or request_authenticated(request):
         return RedirectResponse(_safe_next(next), status_code=303)
     return HTMLResponse(_login_html(next))
 
 
-@router.post("/field/login")
+@router.post("/login")
 def login_submit(
     request: Request,
     password: str = Form(...),
-    next: str = Form("/field"),
+    next: str = Form("/"),
 ) -> Response:
     if not field_auth_enabled():
         return RedirectResponse(_safe_next(next), status_code=303)
@@ -477,33 +491,53 @@ async def ingest_stream(websocket: WebSocket, camera_id: str, token: str = Query
 
 # --------------------------------------------------------------------------- auth page
 def _safe_next(value: str) -> str:
-    parsed = urlparse(value or "/field")
+    parsed = urlparse(value or "/")
     if parsed.scheme or parsed.netloc:
-        return "/field"
-    path = parsed.path or "/field"
-    if path == "/field" or path.startswith("/field/") or path.startswith("/camera/"):
+        return "/"
+    path = parsed.path or "/"
+    allowed = (
+        path == "/"
+        or path == "/admin"
+        or path.startswith("/admin/")
+        or path == "/field"
+        or path.startswith("/field/")
+        or path.startswith("/camera/")
+    )
+    if allowed:
         return path + (f"?{parsed.query}" if parsed.query else "")
-    return "/field"
+    return "/"
 
 
 def _login_html(next_path: str, error: str = "") -> str:
     error_html = f'<p class="err">{html.escape(error)}</p>' if error else ""
     return f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
-<title>CLEAR Field | Sign in</title>
+<title>CLEAR | Sign in</title>
 <style>
-:root{{--bg:#0b0f17;--card:#131a26;--line:#28354a;--text:#f8fafc;--muted:#94a3b8;--clay:#c85a32}}
-*{{box-sizing:border-box}}body{{margin:0;min-height:100vh;display:grid;place-items:center;background:radial-gradient(circle at 50% 0%,#1d2a3d,#0b0f17 55%);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}}
-.card{{width:min(92vw,380px);background:var(--card);border:1px solid var(--line);border-radius:14px;padding:28px}}
-.badge{{display:inline-block;background:var(--clay);padding:5px 10px;border-radius:5px;font-size:12px;font-weight:800;letter-spacing:.12em}}
-h1{{font-size:22px;margin:14px 0 4px}}p{{color:var(--muted);font-size:13px;margin:0 0 18px}}
-label{{display:block;font-size:12px;color:var(--muted);margin-bottom:6px}}
-input{{width:100%;padding:11px 12px;border-radius:8px;border:1px solid var(--line);background:#0d1420;color:var(--text);font-size:15px;outline:none}}
-input:focus{{border-color:var(--clay)}}button{{width:100%;margin-top:14px;padding:11px;border:0;border-radius:8px;background:var(--clay);color:white;font-weight:700;font-size:14px;cursor:pointer}}
-.err{{color:#fca5a5;margin:0 0 12px}}
-</style></head><body><form class="card" method="post" action="/field/login">
-<span class="badge">CLEAR</span><h1>Field console</h1><p>Enter the shared field password.</p>
+@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Oswald:wght@500;600;700&display=swap');
+:root{{--primary:#06483f;--deep:#022f2b;--clay:#f28a24;--ball:#bed95b;--surface:#fff4d8;--text:#f8f2e6;--muted:#9fb5ad;--line:#1d453d;--card:#0d2320;--bg:#041f1b}}
+*{{box-sizing:border-box}}
+body{{margin:0;min-height:100vh;display:grid;place-items:center;background:radial-gradient(120% 90% at 50% 0%,#0d2320,#022f2b 60%);color:var(--text);font-family:'DM Sans',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;padding:24px}}
+.card{{width:min(92vw,400px);background:var(--card);border:1px solid var(--line);border-radius:20px;padding:30px;box-shadow:0 24px 60px rgba(0,0,0,.35)}}
+.badge{{display:inline-flex;align-items:center;gap:10px;font-family:'Oswald',sans-serif;font-size:20px;font-weight:600;letter-spacing:.04em}}
+.badge .mark{{width:31px;height:31px;border-radius:7px;background:var(--clay);border:2px solid var(--surface);display:grid;place-items:center;position:relative}}
+.badge .mark:before{{content:'';position:absolute;inset:4px;border:1px solid var(--surface);opacity:.75;border-radius:3px}}
+.badge .mark:after{{content:'';position:absolute;left:4px;right:4px;top:50%;border-top:1px solid var(--surface);opacity:.75}}
+h1{{font-family:'Oswald',sans-serif;font-size:30px;text-transform:uppercase;margin:18px 0 6px;letter-spacing:.01em}}
+p{{color:var(--muted);font-size:14px;margin:0 0 20px}}
+label{{display:block;font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin-bottom:7px}}
+input{{width:100%;padding:13px 14px;border-radius:10px;border:1px solid var(--line);background:#0a1b18;color:var(--text);font-size:15px;outline:none;font-family:inherit}}
+input:focus{{border-color:var(--ball);box-shadow:0 0 0 3px rgba(190,217,91,.15)}}
+button{{width:100%;margin-top:18px;padding:13px;border:0;border-radius:99px;background:var(--ball);color:var(--deep);font-weight:700;font-size:14px;cursor:pointer;font-family:inherit;letter-spacing:.02em}}
+button:hover{{background:#c9e26a}}
+.err{{color:#f0a08c;margin:0 0 12px;font-size:13px}}
+.hint{{margin-top:16px;text-align:center;font-size:11px;color:#6f8a80}}
+</style></head><body><form class="card" method="post" action="/login">
+<span class="badge"><span class="mark"></span>CLEAR</span>
+<h1>Return to court.</h1><p>Enter the studio password to continue.</p>
 {error_html}
 <input type="hidden" name="next" value="{html.escape(next_path)}"/>
 <label for="password">Password</label><input id="password" name="password" type="password" autocomplete="current-password" required autofocus/>
-<button type="submit">Open console</button></form></body></html>"""
+<button type="submit">Open studio</button>
+<div class="hint">Shared access password · set via CLEAR_FIELD_PASSWORD</div>
+</form></body></html>"""

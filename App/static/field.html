@@ -5,24 +5,25 @@
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
 <title>CLEAR Field | Live Court Detection</title>
 <style>
+  @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Oswald:wght@500;600;700&display=swap');
   :root{
-    --bg:#090d14; --panel:#101722; --panel-2:#141e2c; --line:#233247;
-    --text:#f4f7fb; --muted:#8fa2ba; --dim:#60718a;
-    --clay:#d0643c; --clay-soft:#f08a62; --ball:#d9f99d;
-    --cyan:#38bdf8; --racket:#c084fc; --ok:#34d399; --warn:#fbbf24; --bad:#f87171;
+    --bg:#041f1b; --panel:#0d2320; --panel-2:#12302b; --line:#1d453d;
+    --text:#f8f2e6; --muted:#9fb5ad; --dim:#6f8a80;
+    --clay:#f28a24; --clay-soft:#f5a54e; --ball:#bed95b;
+    --cyan:#bed95b; --racket:#f28a24; --ok:#7bc04e; --warn:#f28a24; --bad:#e2553f;
     --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
   }
   *{box-sizing:border-box}
   html,body{height:100%}
-  body{margin:0;background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;overflow:hidden}
+  body{margin:0;background:var(--bg);color:var(--text);font-family:"DM Sans",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;overflow:hidden}
   button,select,input{font:inherit}
   button{cursor:pointer}
   .app{display:flex;flex-direction:column;height:100vh;min-height:0}
 
   header{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:12px 18px;border-bottom:1px solid var(--line);background:#0c121b;flex:0 0 auto}
   .brand{display:flex;align-items:center;gap:12px;min-width:0}
-  .badge{background:var(--clay);color:#fff;font-weight:800;font-size:12px;letter-spacing:.14em;padding:6px 9px;border-radius:5px}
-  .brand h1{font-size:15px;margin:0;font-weight:700;letter-spacing:.01em;white-space:nowrap}
+  .badge{background:var(--clay);color:#022f2b;font-family:"Oswald",sans-serif;font-weight:600;font-size:13px;letter-spacing:.08em;padding:6px 10px;border-radius:6px;text-transform:uppercase}
+  .brand h1{font-size:16px;margin:0;font-family:"Oswald",sans-serif;font-weight:600;letter-spacing:.02em;text-transform:uppercase;white-space:nowrap}
   .brand p{margin:2px 0 0;font-size:11px;color:var(--muted);white-space:nowrap}
   .head-right{display:flex;align-items:center;gap:10px}
   .nav-link{color:var(--muted);text-decoration:none;font-size:12px;border:1px solid var(--line);padding:7px 10px;border-radius:6px}
@@ -35,7 +36,7 @@
   main{display:grid;grid-template-columns:292px minmax(0,1fr) 318px;gap:12px;padding:12px;flex:1 1 auto;min-height:0}
   .panel{background:var(--panel);border:1px solid var(--line);border-radius:10px;display:flex;flex-direction:column;min-height:0;overflow:hidden}
   .panel-head{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:11px 12px;border-bottom:1px solid var(--line);flex:0 0 auto}
-  .panel-title{font-size:11px;font-weight:800;letter-spacing:.14em;color:var(--muted)}
+  .panel-title{font-size:11px;font-weight:600;letter-spacing:.14em;color:var(--muted);font-family:"Oswald",sans-serif}
   .panel-body{padding:10px;overflow:auto;min-height:0}
 
   .btn{border:1px solid var(--line);background:var(--panel-2);color:var(--text);padding:8px 10px;border-radius:6px;font-size:12px;font-weight:600;display:inline-flex;align-items:center;justify-content:center;gap:6px;transition:.15s}
@@ -160,6 +161,7 @@
       <div class="status-pill"><span class="dot" id="liveDot"></span><span id="liveText">STANDBY</span></div>
       <button class="nav-link" onclick="openRecordings()" style="cursor:pointer">Recordings</button>
       <a class="nav-link" href="/">Analytics Studio</a>
+      <a class="nav-link" href="/admin">Admin</a>
     </div>
   </header>
 

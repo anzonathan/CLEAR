@@ -45,7 +45,10 @@ def password_matches(password: str) -> bool:
 
 def protected_path(path: str) -> bool:
     return (
-        path == "/field"
+        path == "/"
+        or path == "/admin"
+        or path.startswith("/admin/")
+        or path == "/field"
         or path.startswith("/field/")
         or path == "/camera"
         or path.startswith("/camera/")

@@ -5,33 +5,34 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>CLEAR | Clay-Court Line Evaluation & Automated Refereeing</title>
   <style>
+    @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Oswald:wght@500;600;700&display=swap');
     :root {
-      --bg-obsidian: #0b0f17;
-      --bg-panel: #131a26;
-      --bg-card: #1a2333;
-      --border-subtle: #28354a;
-      --clay-primary: #c85a32;
-      --clay-soft: #e07a5f;
-      --tennis-yellow: #d9f99d;
-      --gold-warn: #facc15;
-      --call-in: #22c55e;
-      --call-out: #ef4444;
-      --cyan-accent: #38bdf8;
-      --purple-accent: #c084fc;
-      --text-main: #f8fafc;
-      --text-muted: #94a3b8;
+      --bg-obsidian: #041f1b;
+      --bg-panel: #0d2320;
+      --bg-card: #12302b;
+      --border-subtle: #1d453d;
+      --clay-primary: #f28a24;
+      --clay-soft: #f5a54e;
+      --tennis-yellow: #bed95b;
+      --gold-warn: #f28a24;
+      --call-in: #7bc04e;
+      --call-out: #e2553f;
+      --cyan-accent: #bed95b;
+      --purple-accent: #f28a24;
+      --text-main: #f8f2e6;
+      --text-muted: #9fb5ad;
     }
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
       background: var(--bg-obsidian);
       color: var(--text-main);
-      font-family: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", Roboto, sans-serif;
+      font-family: "DM Sans", -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", Roboto, sans-serif;
       min-height: 100vh;
       display: flex;
       flex-direction: column;
     }
     header {
-      background: linear-gradient(90deg, #111827 0%, #1e293b 60%, #3b1d16 100%);
+      background: linear-gradient(90deg, #022f2b 0%, #06483f 60%, #5a3310 100%);
       border-bottom: 1px solid var(--border-subtle);
       padding: 12px 24px;
       display: flex;
@@ -46,17 +47,41 @@
     }
     .brand-badge {
       background: var(--clay-primary);
-      color: #fff;
-      font-weight: 800;
-      letter-spacing: 0.08em;
-      padding: 6px 12px;
-      border-radius: 6px;
-      font-size: 0.95rem;
+      color: #022f2b;
+      font-family: "Oswald", sans-serif;
+      font-weight: 600;
+      letter-spacing: 0.06em;
+      padding: 5px 12px;
+      border-radius: 7px;
+      font-size: 1.1rem;
+      text-transform: uppercase;
+    }
+    .brand-title {
+      font-family: "Oswald", sans-serif;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.02em;
     }
     .brand-sub {
       font-size: 0.85rem;
       color: var(--text-muted);
     }
+    .head-nav {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .head-nav a {
+      color: var(--text-muted);
+      text-decoration: none;
+      border: 1px solid var(--border-subtle);
+      border-radius: 99px;
+      padding: 7px 14px;
+      font-size: 0.8rem;
+      font-weight: 600;
+    }
+    .head-nav a:hover { color: var(--text-main); border-color: var(--clay-primary); }
+    .head-nav a.active { background: var(--tennis-yellow); color: #022f2b; border-color: var(--tennis-yellow); }
     .score-banner {
       display: flex;
       align-items: center;
@@ -74,8 +99,8 @@
       font-weight: 600;
     }
     .score-pill {
-      background: #1e3a8a;
-      color: #fff;
+      background: #06362f;
+      color: var(--tennis-yellow);
       padding: 2px 9px;
       border-radius: 4px;
       font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
@@ -108,11 +133,12 @@
       padding-bottom: 10px;
     }
     .panel-title {
-      font-size: 0.92rem;
-      font-weight: 700;
+      font-family: "Oswald", sans-serif;
+      font-size: 1rem;
+      font-weight: 600;
       text-transform: uppercase;
-      letter-spacing: 0.06em;
-      color: #e2e8f0;
+      letter-spacing: 0.04em;
+      color: #f8f2e6;
     }
     .viewport-wrap {
       position: relative;
@@ -251,7 +277,7 @@
     <div class="brand">
       <span class="brand-badge">CLEAR</span>
       <div>
-        <div style="font-weight: 700; font-size: 0.95rem;">Clay-Court Line Evaluation & Automated Refereeing</div>
+        <div class="brand-title" style="font-size: 1.05rem;">Clay-Court Line Evaluation & Automated Refereeing</div>
         <div class="brand-sub">Single-Camera 6-Anchor Homography • 3-Frame Temporal Hybrid Tracker • UCU Capstone</div>
       </div>
     </div>
@@ -266,7 +292,11 @@
         <span class="score-pill" id="scoreP2">0 | 0 | 0</span>
       </div>
     </div>
-    <a href="/field" style="color:var(--text-muted);text-decoration:none;border:1px solid var(--border-subtle);border-radius:6px;padding:7px 11px;font-size:0.8rem;font-weight:600;">Field test →</a>
+    <div class="head-nav">
+      <a href="/" class="active">Dashboard</a>
+      <a href="/field">Field</a>
+      <a href="/admin">Admin</a>
+    </div>
   </header>
 
   <main class="layout">
@@ -487,7 +517,7 @@
     function drawRadar() {
       if (!STATE) return;
       const W = radarCanvas.width, H = radarCanvas.height;
-      rctx.fillStyle = '#1e3a5f';
+      rctx.fillStyle = '#06362f';
       rctx.fillRect(0, 0, W, H);
 
       const padX = 28, padY = 30;
@@ -499,7 +529,7 @@
       ];
 
       // Clay fill
-      rctx.fillStyle = '#b55435';
+      rctx.fillStyle = '#f28a24';
       rctx.fillRect(padX, padY, cW, cH);
 
       // Court lines
@@ -526,7 +556,7 @@
             else rctx.lineTo(bx, by);
           }
         }
-        rctx.strokeStyle = 'rgba(250, 204, 21, 0.85)';
+        rctx.strokeStyle = 'rgba(190,217,91,0.9)';
         rctx.lineWidth = 2;
         rctx.stroke();
       }
@@ -549,17 +579,17 @@
         if (cur.p1) {
           const [px, py] = toMini(cur.p1.xm, cur.p1.ym);
           rctx.beginPath(); rctx.arc(px, py, 6, 0, Math.PI * 2);
-          rctx.fillStyle = '#38bdf8'; rctx.fill(); rctx.strokeStyle = '#fff'; rctx.stroke();
+          rctx.fillStyle = '#bed95b'; rctx.fill(); rctx.strokeStyle = '#022f2b'; rctx.stroke();
         }
         if (cur.p2) {
           const [px, py] = toMini(cur.p2.xm, cur.p2.ym);
           rctx.beginPath(); rctx.arc(px, py, 6, 0, Math.PI * 2);
-          rctx.fillStyle = '#c084fc'; rctx.fill(); rctx.strokeStyle = '#fff'; rctx.stroke();
+          rctx.fillStyle = '#f8f2e6'; rctx.fill(); rctx.strokeStyle = '#022f2b'; rctx.stroke();
         }
         if (cur.ball) {
           const [bx, by] = toMini(cur.ball.xm, cur.ball.ym);
           rctx.beginPath(); rctx.arc(bx, by, 4.5, 0, Math.PI * 2);
-          rctx.fillStyle = '#fef08a'; rctx.fill();
+          rctx.fillStyle = '#fff4d8'; rctx.fill();
           document.getElementById('ballSpeedBadge').textContent = `Ball: ${cur.ball.kmh.toFixed(1)} km/h`;
         }
       }

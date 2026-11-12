@@ -1,4 +1,4 @@
-import { pool } from "./auth.js";
+import { Pool } from "pg";
 import "dotenv/config";
 
 const migrations = `
@@ -14,14 +14,6 @@ CREATE TABLE IF NOT EXISTS "user" (
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
-
--- Add gender column if it doesn't exist (for existing databases)
-DO $$
-BEGIN
-  IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'user' AND column_name = 'gender') THEN
-    ALTER TABLE "user" ADD COLUMN gender TEXT;
-  END IF;
-END $$;
 
 CREATE TABLE IF NOT EXISTS session (
   id TEXT PRIMARY KEY,
@@ -121,6 +113,11 @@ CREATE INDEX IF NOT EXISTS idx_live_sessions_connection ON live_sessions(connect
 `;
 
 async function migrate() {
+  // Create separate pool for migration (don't affect server pool)
+  const pool = new Pool({
+    connectionString: process.env.DATABASE_URL ?? "postgres://clear:clear_dev_password@localhost:5432/clear",
+  });
+
   console.log("Running migrations...");
   try {
     await pool.query(migrations);

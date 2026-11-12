@@ -6,10 +6,10 @@ RUN apt-get update \
 
 WORKDIR /app
 
-RUN corepack enable
+RUN corepack enable && corepack prepare pnpm@9 --activate
 
 COPY package.json pnpm-lock.yaml ./
-RUN pnpm config set ignore-scripts false && pnpm install
+RUN pnpm install
 
 COPY . .
 

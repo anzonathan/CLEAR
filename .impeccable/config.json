@@ -1,0 +1,26 @@
+{
+  "detector": {
+    "ignoreRules": [],
+    "ignoreFiles": [],
+    "ignoreValues": [
+      {
+        "rule": "gray-on-color",
+        "value": "*",
+        "files": [
+          "App/static/index.html"
+        ],
+        "createdAt": "2026-11-12T06:25:28.630Z",
+        "reason": "Pre-existing dashboard design from original CV pipeline"
+      },
+      {
+        "rule": "low-contrast",
+        "value": "*",
+        "files": [
+          "App/static/index.html"
+        ],
+        "createdAt": "2026-11-12T06:25:33.084Z",
+        "reason": "Pre-existing dashboard design from original CV pipeline"
+      }
+    ]
+  }
+}

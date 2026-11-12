@@ -226,6 +226,8 @@
     }
     .bounce-card.out { border-left-color: var(--call-out); }
     .bounce-card.doubt { border-left-color: var(--gold-warn); }
+    .bounce-card.fault { border-left-color: var(--call-out); }
+    .bounce-card.no-fault { border-left-color: var(--call-in); }
     .bounce-card:hover { transform: translateY(-2px); border-color: var(--cyan-accent); }
     .call-badge {
       display: inline-block;
@@ -237,6 +239,8 @@
     .call-badge.in { background: rgba(34, 197, 94, 0.2); color: #4ade80; }
     .call-badge.out { background: rgba(239, 68, 68, 0.2); color: #f87171; }
     .call-badge.doubt-tag { background: rgba(250, 204, 21, 0.2); color: #facc15; margin-left: 6px; }
+    .call-badge.fault { background: rgba(239, 68, 68, 0.2); color: #f87171; }
+    .call-badge.no-fault { background: rgba(34, 197, 94, 0.2); color: #4ade80; }
     .radar-wrap {
       display: flex;
       justify-content: center;
@@ -278,7 +282,7 @@
       <span class="brand-badge">CLEAR</span>
       <div>
         <div class="brand-title" style="font-size: 1.05rem;">Clay-Court Line Evaluation & Automated Refereeing</div>
-        <div class="brand-sub">Single-Camera 6-Anchor Homography • 3-Frame Temporal Hybrid Tracker • UCU Capstone</div>
+        <div class="brand-sub">Single-Camera 6-Anchor Homography · Foot-Fault Overlay · UCU Capstone</div>
       </div>
     </div>
     <div class="score-banner">
@@ -300,7 +304,6 @@
   </header>
 
   <main class="layout">
-    <!-- Left Column: Video + Interactive Virtual Court Canvas + Bounce Replay Cards -->
     <div style="display: flex; flex-direction: column; gap: 16px;">
       <section class="panel">
         <div class="panel-header">
@@ -341,7 +344,7 @@
             <button class="primary" onclick="reRunPipeline()">↻ Re-Run Pipeline</button>
           </div>
           <div class="hint-bar" id="interactiveCallBox">
-            Tip: Click anywhere on the clay court to test instant homography IN/OUT judgment, or drag the 6 gold anchor pegs to recalibrate.
+            Tip: Scrub early frames for LEGAL SERVE / FOOT FAULT overlay. Click court for IN/OUT. Drag gold anchors to recalibrate.
           </div>
         </div>
       </section>
@@ -353,9 +356,16 @@
         </div>
         <div class="bounces-strip" id="bouncesContainer"></div>
       </section>
+
+      <section class="panel">
+        <div class="panel-header">
+          <span class="panel-title">Foot Fault Calls (Serve Pre-Contact)</span>
+          <span class="mono" id="faultBadge" style="color: var(--gold-warn);">0 events</span>
+        </div>
+        <div class="bounces-strip" id="faultsContainer"></div>
+      </section>
     </div>
 
-    <!-- Right Column: 2D Top-Down Court Radar + Player & Ball Telemetry -->
     <div style="display: flex; flex-direction: column; gap: 16px;">
       <section class="panel">
         <div class="panel-header">
@@ -407,6 +417,65 @@
       bgImage.src = `/api/frame/${fIdx}?t=${Date.now()}`;
     }
 
+    function faultForFrame(fIdx) {
+      const events = STATE?.report?.fault_events || STATE?.report?.foot_faults || [];
+      let exact = null;
+      let best = null;
+      for (const e of events) {
+        if (e.frame_idx === fIdx) exact = e;
+        if (e.frame_idx <= fIdx && (best === null || e.frame_idx > best.frame_idx)) {
+          best = e;
+        }
+      }
+      if (exact) return exact;
+      if (best && fIdx - best.frame_idx <= 2) return best;
+      return null;
+    }
+
+    function drawFaultOverlay() {
+      const ev = faultForFrame(currentFrame);
+      if (!ev || (ev.status !== 'fault' && ev.status !== 'no_fault')) return;
+
+      const isFault = ev.status === 'fault';
+      const label = isFault ? 'FOOT FAULT' : 'LEGAL SERVE';
+      const bg = isFault ? 'rgba(239, 68, 68, 0.92)' : 'rgba(34, 197, 94, 0.92)';
+      const text = `${label}  ·  P${ev.player_id ?? '?'}  ·  f${ev.frame_idx}`;
+
+      ctx.save();
+      ctx.font = 'bold 22px ui-monospace, SFMono-Regular, Menlo, monospace';
+      const padX = 16;
+      const boxH = 36;
+      const tw = ctx.measureText(text).width;
+      const boxW = tw + padX * 2;
+      const x = (courtCanvas.width - boxW) / 2;
+      const y = 18;
+      const r = 8;
+
+      ctx.fillStyle = bg;
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(x + r, y);
+      ctx.arcTo(x + boxW, y, x + boxW, y + boxH, r);
+      ctx.arcTo(x + boxW, y + boxH, x, y + boxH, r);
+      ctx.arcTo(x, y + boxH, x, y, r);
+      ctx.arcTo(x, y, x + boxW, y, r);
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+
+      ctx.fillStyle = '#ffffff';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(text, x + padX, y + boxH / 2);
+
+      ctx.font = '12px ui-monospace, SFMono-Regular, Menlo, monospace';
+      ctx.fillStyle = 'rgba(255,255,255,0.9)';
+      const reason = (ev.reason || '').slice(0, 90);
+      const rw = ctx.measureText(reason).width;
+      ctx.fillText(reason, (courtCanvas.width - rw) / 2, y + boxH + 16);
+      ctx.restore();
+    }
+
     function updateUI() {
       if (!STATE) return;
       const rep = STATE.report;
@@ -419,10 +488,10 @@
       const slider = document.getElementById('frameSlider');
       slider.max = Math.max(0, STATE.frames.length - 1);
 
-      // Render bounce cards
+      // Bounce cards
       const bWrap = document.getElementById('bouncesContainer');
       bWrap.innerHTML = '';
-      rep.line_calling.bounces.forEach((b, idx) => {
+      (rep.line_calling?.bounces || []).forEach((b) => {
         const div = document.createElement('div');
         div.className = `bounce-card ${b.is_in ? 'in' : 'out'} ${b.in_doubt_zone ? 'doubt' : ''}`;
         div.onclick = () => jumpToFrame(b.frame_idx);
@@ -438,24 +507,59 @@
           <div class="mono" style="font-size:0.86rem; font-weight:700;">Margin: ${sign}${b.signed_margin_cm} cm</div>
           <div style="font-size:0.76rem; color:var(--text-muted); margin-top:3px;">
             Line: ${b.closest_line}<br/>
-            Court: (${b.x_m.toFixed(2)}m, ${b.y_m.toFixed(2)}m) • Conf: ${(b.confidence * 100).toFixed(0)}%
+            Court: (${b.x_m.toFixed(2)}m, ${b.y_m.toFixed(2)}m) · Conf: ${(b.confidence * 100).toFixed(0)}%
           </div>
         `;
         bWrap.appendChild(div);
       });
 
-      // Render stats grid
+      // Foot-fault summary cards
+      const fWrap = document.getElementById('faultsContainer');
+      const faultBadge = document.getElementById('faultBadge');
+      fWrap.innerHTML = '';
+      const faults = rep.foot_faults || rep.fault_events || [];
+      const shown = faults.filter(e => e.status === 'fault' || e.status === 'no_fault');
+      const compact = [];
+      for (const e of shown) {
+        if (!compact.length || compact[compact.length - 1].status !== e.status) {
+          compact.push(e);
+        } else if (e.status === 'fault') {
+          compact[compact.length - 1] = e;
+        }
+      }
+      const nFault = shown.filter(e => e.status === 'fault').length;
+      faultBadge.textContent = `${nFault} fault(s) · ${shown.length} checks`;
+      compact.forEach((e) => {
+        const div = document.createElement('div');
+        const isFault = e.status === 'fault';
+        div.className = `bounce-card ${isFault ? 'fault' : 'no-fault'}`;
+        div.onclick = () => jumpToFrame(e.frame_idx);
+        div.innerHTML = `
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+            <div>
+              <span class="call-badge ${isFault ? 'fault' : 'no-fault'}">${isFault ? 'FOOT FAULT' : 'LEGAL SERVE'}</span>
+            </div>
+            <span class="mono" style="color:var(--text-muted);">Frame #${e.frame_idx}</span>
+          </div>
+          <div class="mono" style="font-size:0.86rem; font-weight:700;">P${e.player_id ?? '?'} · conf ${(e.confidence * 100).toFixed(0)}%</div>
+          <div style="font-size:0.76rem; color:var(--text-muted); margin-top:3px;">
+            ${e.reason}
+          </div>
+        `;
+        fWrap.appendChild(div);
+      });
+
       const p1 = rep.players['P1 (NEAR)'] || { distance_m: 0, max_speed_kmh: 0 };
       const p2 = rep.players['P2 (FAR)'] || { distance_m: 0, max_speed_kmh: 0 };
-      const bt = rep.ball_tracking;
+      const bt = rep.ball_tracking || {};
       document.getElementById('statsGrid').innerHTML = `
         <div class="stat-box">
           <div class="stat-label">Ball Track Coverage</div>
-          <div class="stat-val" style="color:var(--tennis-yellow);">${bt.coverage_pct}%</div>
+          <div class="stat-val" style="color:var(--tennis-yellow);">${bt.coverage_pct ?? 0}%</div>
         </div>
         <div class="stat-box">
           <div class="stat-label">Peak Ball Speed</div>
-          <div class="stat-val" style="color:var(--cyan-accent);">${bt.max_speed_kmh} km/h</div>
+          <div class="stat-val" style="color:var(--cyan-accent);">${bt.max_speed_kmh ?? 0} km/h</div>
         </div>
         <div class="stat-box">
           <div class="stat-label">P1 (Near) Distance</div>
@@ -475,7 +579,6 @@
         ctx.drawImage(bgImage, 0, 0, courtCanvas.width, courtCanvas.height);
       }
 
-      // Draw interactive virtual lines overlay
       if (layers.virtual && STATE.projected_lines) {
         STATE.projected_lines.forEach(ln => {
           ctx.beginPath();
@@ -487,7 +590,6 @@
         });
       }
 
-      // Draw interactive anchor handles
       if (layers.anchors && STATE.report?.calibration?.anchors_px) {
         Object.entries(STATE.report.calibration.anchors_px).forEach(([name, uv]) => {
           ctx.beginPath();
@@ -500,7 +602,6 @@
         });
       }
 
-      // Draw custom clicked test point call if present
       if (customPointCall) {
         ctx.beginPath();
         ctx.arc(customPointCall.u, customPointCall.v, 9, 0, Math.PI * 2);
@@ -510,6 +611,9 @@
         ctx.lineWidth = 2;
         ctx.stroke();
       }
+
+      // Live foot-fault / legal-serve banner on the court (same role as IN/OUT overlay)
+      drawFaultOverlay();
 
       drawRadar();
     }
@@ -529,10 +633,9 @@
       ];
 
       // Clay fill
-      rctx.fillStyle = '#f28a24';
+      rctx.fillStyle = '#b55435';
       rctx.fillRect(padX, padY, cW, cH);
 
-      // Court lines
       STATE.projected_lines.forEach(ln => {
         const [x1, y1] = toMini(ln.p1_m[0], ln.p1_m[1]);
         const [x2, y2] = toMini(ln.p2_m[0], ln.p2_m[1]);
@@ -544,7 +647,6 @@
         rctx.stroke();
       });
 
-      // Ball trail up to currentFrame
       if (layers.trail) {
         rctx.beginPath();
         let started = false;
@@ -561,8 +663,7 @@
         rctx.stroke();
       }
 
-      // Bounces
-      STATE.report.line_calling.bounces.forEach(b => {
+      (STATE.report?.line_calling?.bounces || []).forEach(b => {
         const [bx, by] = toMini(b.x_m, b.y_m);
         rctx.beginPath();
         rctx.arc(bx, by, 5, 0, Math.PI * 2);
@@ -573,13 +674,22 @@
         rctx.stroke();
       });
 
-      // Current frame players & ball
       const cur = STATE.frames[currentFrame];
       if (cur) {
         if (cur.p1) {
           const [px, py] = toMini(cur.p1.xm, cur.p1.ym);
           rctx.beginPath(); rctx.arc(px, py, 6, 0, Math.PI * 2);
-          rctx.fillStyle = '#bed95b'; rctx.fill(); rctx.strokeStyle = '#022f2b'; rctx.stroke();
+          rctx.fillStyle = '#38bdf8'; rctx.fill(); rctx.strokeStyle = '#fff'; rctx.stroke();
+
+          // Ring server on radar during foot-fault evaluation
+          const ev = faultForFrame(currentFrame);
+          if (ev && (ev.status === 'fault' || ev.status === 'no_fault')) {
+            rctx.beginPath();
+            rctx.arc(px, py, 11, 0, Math.PI * 2);
+            rctx.strokeStyle = ev.status === 'fault' ? '#ef4444' : '#22c55e';
+            rctx.lineWidth = 2.5;
+            rctx.stroke();
+          }
         }
         if (cur.p2) {
           const [px, py] = toMini(cur.p2.xm, cur.p2.ym);
@@ -645,10 +755,9 @@
       updateUI();
       loadFrameImage(currentFrame);
       document.getElementById('interactiveCallBox').textContent =
-        `Pipeline updated (${court_mode}, ${line_condition} lines). Click anywhere on the court to test IN/OUT calls.`;
+        `Pipeline updated (${court_mode}, ${line_condition}). Scrub frames 0–19 for foot-fault overlay.`;
     }
 
-    // Mouse interaction on courtCanvas: drag anchor pegs OR click to judge arbitrary point
     function getCanvasUV(evt) {
       const rect = courtCanvas.getBoundingClientRect();
       return [
@@ -669,7 +778,6 @@
           }
         }
       }
-      // Otherwise judge clicked court location
       const court_mode = document.getElementById('courtModeSelect').value;
       const res = await fetch('/api/judge-point', {
         method: 'POST',
@@ -710,7 +818,6 @@
       document.getElementById('interactiveCallBox').textContent = `Homography recalibrated (${movedAnchor}).`;
     });
 
-    // Playback loop
     setInterval(() => {
       if (isPlaying && STATE && STATE.frames.length > 0) {
         currentFrame = (currentFrame + 2) % STATE.frames.length;

@@ -137,6 +137,9 @@ CSRF_TRUSTED_ORIGINS = os.environ.get(
     'CSRF_TRUSTED_ORIGINS',
     'http://localhost:8443'
 ).split(',')
+CSRF_COOKIE_HTTPONLY = False  # Allow JS to read CSRF cookie
+CSRF_COOKIE_SAMESITE = 'Lax'
+CSRF_COOKIE_SECURE = not DEBUG
 
 # Session settings
 SESSION_COOKIE_HTTPONLY = True

@@ -33,8 +33,12 @@ RUN python manage.py collectstatic --noinput || true
 # Create directories
 RUN mkdir -p /app/media /app/staticfiles
 
+# Copy and set entrypoint
+COPY entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
 # Expose port
 EXPOSE 8000
 
-# Run with Daphne (ASGI server for WebSocket support)
-CMD ["daphne", "-b", "0.0.0.0", "-p", "8000", "config.asgi:application"]
+# Run entrypoint (migrations + seed + daphne)
+ENTRYPOINT ["/entrypoint.sh"]

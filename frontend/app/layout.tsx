@@ -1,4 +1,5 @@
 import type { Metadata } from 'next';
+import { Toaster } from 'sonner';
 import { AuthProvider } from '@/lib/auth-context';
 import './globals.css';
 
@@ -16,6 +17,8 @@ export default function RootLayout({
     <html lang="en">
       <body>
         <AuthProvider>{children}</AuthProvider>
+        {/* App-wide notifications: call toast() from 'sonner' anywhere. */}
+        <Toaster position="top-center" richColors closeButton toastOptions={{ className: 'clear-toast' }} />
       </body>
     </html>
   );

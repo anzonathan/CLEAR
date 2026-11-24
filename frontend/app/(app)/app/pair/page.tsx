@@ -1,5 +1,6 @@
 'use client';
 
+import { toast } from 'sonner';
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { generatePairCode, joinPairCode } from '@/lib/api';
@@ -11,18 +12,17 @@ export default function PairPage() {
   const [generatedCode, setGeneratedCode] = useState('');
   const [expiresAt, setExpiresAt] = useState('');
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState('');
   const [copied, setCopied] = useState(false);
 
   const handleGenerate = async () => {
     setLoading(true);
-    setError('');
     try {
       const data = await generatePairCode();
       setGeneratedCode(data.code);
       setExpiresAt(data.expires_at);
+      toast.success('Pair code ready', { description: 'Share it with your partner.' });
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to generate code');
+      toast.error(err instanceof Error ? err.message : 'Failed to generate code');
     } finally {
       setLoading(false);
     }
@@ -31,19 +31,25 @@ export default function PairPage() {
   const handleJoin = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
-    setError('');
     try {
-      const data = await joinPairCode(code);
-      router.push(`/app/connections/${data.connectionId}`);
+      await joinPairCode(code);
+      toast.success('Paired', { description: 'The connection is in your list.' });
+      router.push('/app/connections');
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to join');
+      toast.error(err instanceof Error ? err.message : 'Failed to join');
     } finally {
       setLoading(false);
     }
   };
 
   const copyCode = async () => {
-    await navigator.clipboard.writeText(generatedCode);
+    try {
+      await navigator.clipboard.writeText(generatedCode);
+    } catch {
+      toast.error('Could not copy. Select the code and copy it manually.');
+      return;
+    }
+    toast.success('Code copied');
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };
@@ -96,12 +102,6 @@ export default function PairPage() {
           Enter Code
         </button>
       </div>
-
-      {error && (
-        <div className="form-error" role="alert">
-          {error}
-        </div>
-      )}
 
       {mode === 'generate' ? (
         <div className="pair-generate panel">

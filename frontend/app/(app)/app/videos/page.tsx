@@ -1,5 +1,6 @@
 'use client';
 
+import { toast } from 'sonner';
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { getVideos, SharedVideo } from '@/lib/api';
@@ -14,7 +15,7 @@ export default function VideosPage() {
         const data = await getVideos();
         setVideos(data);
       } catch (err) {
-        console.error('Failed to fetch videos:', err);
+        toast.error('Could not load videos', { description: err instanceof Error ? err.message : undefined });
       } finally {
         setLoading(false);
       }

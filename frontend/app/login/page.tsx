@@ -1,15 +1,17 @@
 'use client';
 
+import { toast } from 'sonner';
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
+import { useAuth } from '@/lib/auth-context';
 import Link from 'next/link';
 
 export default function LoginPage() {
   const router = useRouter();
+  const { refetch } = useAuth();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
-  const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const [csrfToken, setCsrfToken] = useState('');
 
@@ -23,7 +25,6 @@ export default function LoginPage() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    setError('');
     setLoading(true);
 
     try {
@@ -42,9 +43,11 @@ export default function LoginPage() {
         throw new Error(data.detail || data.non_field_errors?.[0] || 'Login failed');
       }
 
+      await refetch(); // load the new session into auth context, else /app bounces to /login
+      toast.success('Signed in');
       router.push('/app');
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Login failed');
+      toast.error(err instanceof Error ? err.message : 'Login failed');
     } finally {
       setLoading(false);
     }
@@ -97,12 +100,6 @@ export default function LoginPage() {
         </div>
 
         <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-          {error && (
-            <div className="form-error" role="alert">
-              {error}
-            </div>
-          )}
-
           <div className="field">
             <label>EMAIL</label>
             <div className="input-shell">

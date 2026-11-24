@@ -1,18 +1,20 @@
 'use client';
 
+import { toast } from 'sonner';
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
+import { useAuth } from '@/lib/auth-context';
 import Link from 'next/link';
 
 export default function RegisterPage() {
   const router = useRouter();
+  const { refetch } = useAuth();
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [password2, setPassword2] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [showPassword2, setShowPassword2] = useState(false);
-  const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const [csrfToken, setCsrfToken] = useState('');
 
@@ -26,10 +28,9 @@ export default function RegisterPage() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    setError('');
 
     if (password !== password2) {
-      setError('Passwords do not match');
+      toast.error('Passwords do not match');
       return;
     }
 
@@ -52,9 +53,11 @@ export default function RegisterPage() {
         throw new Error(errorMsg);
       }
 
+      await refetch(); // load the new session into auth context, else /app bounces to /login
+      toast.success('Account created');
       router.push('/app');
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Registration failed');
+      toast.error(err instanceof Error ? err.message : 'Registration failed');
     } finally {
       setLoading(false);
     }
@@ -136,12 +139,6 @@ export default function RegisterPage() {
         </div>
 
         <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-          {error && (
-            <div className="form-error" role="alert">
-              {error}
-            </div>
-          )}
-
           <div className="field">
             <label>NAME</label>
             <div className="input-shell">

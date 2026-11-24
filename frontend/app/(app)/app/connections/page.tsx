@@ -1,5 +1,6 @@
 'use client';
 
+import { toast } from 'sonner';
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { getConnections, Connection } from '@/lib/api';
@@ -14,7 +15,7 @@ export default function ConnectionsPage() {
         const data = await getConnections();
         setConnections(data);
       } catch (err) {
-        console.error('Failed to fetch connections:', err);
+        toast.error('Could not load connections', { description: err instanceof Error ? err.message : undefined });
       } finally {
         setLoading(false);
       }

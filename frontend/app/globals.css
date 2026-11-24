@@ -987,3 +987,9 @@ body { background: var(--paper); }
   .admin-main { padding: 18px; }
   .metric-grid { grid-template-columns: repeat(2, 1fr); }
 }
+
+/* Sonner toasts: match the app's type and radius */
+.clear-toast {
+  font-family: inherit;
+  border-radius: var(--radius-md) !important;
+}

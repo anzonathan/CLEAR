@@ -1,5 +1,6 @@
 'use client';
 
+import { toast } from 'sonner';
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useAuth } from '@/lib/auth-context';
@@ -21,7 +22,7 @@ export default function HomePage() {
         setConnections(conns);
         setActiveSessions(sessions);
       } catch (err) {
-        console.error('Failed to fetch data:', err);
+        toast.error('Could not load data', { description: err instanceof Error ? err.message : undefined });
       } finally {
         setLoading(false);
       }

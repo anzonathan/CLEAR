@@ -1,5 +1,6 @@
 'use client';
 
+import { toast } from 'sonner';
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
@@ -29,7 +30,7 @@ export default function AdminPage() {
         setStats(statsData);
         setUsers(usersData);
       } catch (err) {
-        console.error('Failed to fetch admin data:', err);
+        toast.error('Could not load admin data', { description: err instanceof Error ? err.message : undefined });
       } finally {
         setLoading(false);
       }
@@ -43,8 +44,9 @@ export default function AdminPage() {
     try {
       await updateUserRole(userId, newRole);
       setUsers(users.map(u => u.id === userId ? { ...u, role: newRole as AdminUser['role'] } : u));
+      toast.success(`Role changed to ${newRole}`);
     } catch (err) {
-      console.error('Failed to update role:', err);
+      toast.error('Could not change role', { description: err instanceof Error ? err.message : undefined });
     }
   };
 
@@ -53,8 +55,9 @@ export default function AdminPage() {
     try {
       await deleteUser(userId);
       setUsers(users.filter(u => u.id !== userId));
+      toast.success('User deleted');
     } catch (err) {
-      console.error('Failed to delete user:', err);
+      toast.error('Could not delete user', { description: err instanceof Error ? err.message : undefined });
     }
   };
 

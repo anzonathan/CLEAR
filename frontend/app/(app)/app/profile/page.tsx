@@ -1,5 +1,6 @@
 'use client';
 
+import { toast } from 'sonner';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { useAuth } from '@/lib/auth-context';
@@ -19,6 +20,7 @@ export default function ProfilePage() {
 
   const handleLogout = async () => {
     await logout();
+    toast.success('Signed out');
     router.push('/login');
   };
 

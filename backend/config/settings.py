@@ -172,6 +172,15 @@ ACCOUNT_EMAIL_REQUIRED = True
 ACCOUNT_USERNAME_REQUIRED = False
 ACCOUNT_UNIQUE_EMAIL = True
 ACCOUNT_EMAIL_VERIFICATION = 'optional'
+
+# Email: console by default (no SMTP server needed). Set EMAIL_BACKEND + EMAIL_* in production.
+EMAIL_BACKEND = os.environ.get('EMAIL_BACKEND', 'django.core.mail.backends.console.EmailBackend')
+EMAIL_HOST = os.environ.get('EMAIL_HOST', 'localhost')
+EMAIL_PORT = int(os.environ.get('EMAIL_PORT', '587'))
+EMAIL_HOST_USER = os.environ.get('EMAIL_HOST_USER', '')
+EMAIL_HOST_PASSWORD = os.environ.get('EMAIL_HOST_PASSWORD', '')
+EMAIL_USE_TLS = os.environ.get('EMAIL_USE_TLS', 'True') == 'True'
+DEFAULT_FROM_EMAIL = os.environ.get('DEFAULT_FROM_EMAIL', 'CLEAR <noreply@clear.local>')
 ACCOUNT_USER_MODEL_USERNAME_FIELD = None
 ACCOUNT_ADAPTER = 'apps.users.adapters.AccountAdapter'
 SOCIALACCOUNT_ADAPTER = 'apps.users.adapters.SocialAccountAdapter'
@@ -180,6 +189,7 @@ SOCIALACCOUNT_ADAPTER = 'apps.users.adapters.SocialAccountAdapter'
 REST_AUTH = {
     'USE_JWT': False,
     'SESSION_LOGIN': True,
+    'TOKEN_MODEL': None,  # session auth only; no rest_framework.authtoken
     'REGISTER_SERIALIZER': 'apps.users.serializers.CustomRegisterSerializer',
     'USER_DETAILS_SERIALIZER': 'apps.users.serializers.UserSerializer',
 }

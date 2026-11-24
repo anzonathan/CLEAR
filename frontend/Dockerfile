@@ -21,6 +21,9 @@ COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 
 # Build the application
+# next.config.js rewrites are resolved at build time, so BACKEND_URL must be set here.
+ARG BACKEND_URL=http://backend:8000
+ENV BACKEND_URL=$BACKEND_URL
 ENV NEXT_TELEMETRY_DISABLED=1
 RUN npm run build
 

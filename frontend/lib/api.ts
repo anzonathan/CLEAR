@@ -1,11 +1,21 @@
 const API_URL = process.env.NEXT_PUBLIC_API_URL || '';
 
+export function getCsrfToken(): string {
+  if (typeof document === 'undefined') return '';
+  const match = document.cookie.match(/(?:^|;\s*)csrftoken=([^;]*)/);
+  return match ? decodeURIComponent(match[1]) : '';
+}
+
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
+  const method = (options.method || 'GET').toUpperCase();
+  const csrfHeader: Record<string, string> =
+    method === 'GET' || method === 'HEAD' ? {} : { 'X-CSRFToken': getCsrfToken() };
   const res = await fetch(`${API_URL}${path}`, {
     ...options,
     credentials: 'include',
     headers: {
       'Content-Type': 'application/json',
+      ...csrfHeader,
       ...options.headers,
     },
   });
@@ -15,6 +25,7 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
     throw new Error(error.error || error.detail || 'Request failed');
   }
 
+  if (res.status === 204) return undefined as T;
   return res.json();
 }
 

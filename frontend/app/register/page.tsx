@@ -47,8 +47,8 @@ export default function RegisterPage() {
       });
 
       if (!res.ok) {
-        const data = await res.json();
-        const errorMsg = data.email?.[0] || data.password1?.[0] || data.non_field_errors?.[0] || 'Registration failed';
+        const data = await res.json().catch(() => ({ detail: `Server error (${res.status})` }));
+        const errorMsg = data.email?.[0] || data.password1?.[0] || data.non_field_errors?.[0] || data.detail || 'Registration failed';
         throw new Error(errorMsg);
       }
 

@@ -38,7 +38,7 @@ export default function LoginPage() {
       });
 
       if (!res.ok) {
-        const data = await res.json();
+        const data = await res.json().catch(() => ({ detail: `Server error (${res.status})` }));
         throw new Error(data.detail || data.non_field_errors?.[0] || 'Login failed');
       }
 

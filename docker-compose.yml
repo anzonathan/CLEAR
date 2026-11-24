@@ -81,7 +81,10 @@ services:
     shm_size: 1gb
 
   frontend:
-    build: ./frontend
+    build:
+      context: ./frontend
+      args:
+        BACKEND_URL: http://backend:8000
     ports:
       - "8443:3000"
     environment:

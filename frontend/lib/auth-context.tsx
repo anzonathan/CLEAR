@@ -1,7 +1,7 @@
 'use client';
 
 import { createContext, useContext, useEffect, useState, ReactNode } from 'react';
-import { getMe, User } from './api';
+import { getMe, getCsrfToken, User } from './api';
 
 interface AuthContextType {
   user: User | null;
@@ -40,6 +40,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       await fetch('/api/auth/logout/', {
         method: 'POST',
         credentials: 'include',
+        headers: { 'X-CSRFToken': getCsrfToken() },
       });
     } catch (err) {
       // Ignore logout errors

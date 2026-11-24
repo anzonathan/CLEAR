@@ -37,6 +37,7 @@ INSTALLED_APPS = [
     'apps.videos',
     'apps.live',
     'apps.field',
+    'apps.games',
 ]
 
 MIDDLEWARE = [

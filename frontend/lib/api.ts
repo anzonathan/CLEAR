@@ -248,3 +248,155 @@ export async function getFieldHealth() {
     auth_enabled: boolean;
   }>('/api/field/health/');
 }
+
+// Games: a pair schedules a game; each player films one end with their phone.
+export type GameEnd = 'end_a' | 'end_b';
+export type GameStatus = 'scheduled' | 'live' | 'completed' | 'cancelled';
+export type AnalysisStatus = 'none' | 'running' | 'done' | 'failed';
+
+export interface UserBrief {
+  id: string;
+  name: string;
+  email: string;
+}
+
+export interface CameraSlotState {
+  id: string;
+  online: boolean;
+  active: boolean;
+  fps?: number | null;
+  calibrated?: boolean;
+  missing?: boolean;
+}
+
+export interface GameEndSlot {
+  user: UserBrief | null;
+  camera: CameraSlotState | null;
+}
+
+export interface AnalysisReport {
+  camera_id?: string;
+  calibrated?: boolean;
+  error?: string;
+  total_frames?: number;
+  fps?: number;
+  ball_tracking?: {
+    tracked_frames: number;
+    coverage_pct: number;
+    avg_speed_kmh: number;
+    max_speed_kmh: number;
+    rally_strokes: number;
+  };
+  line_calling?: {
+    total_bounces: number;
+    in_calls: number;
+    out_calls: number;
+    doubt_zone_calls: number;
+  };
+  foot_faults?: unknown[];
+  service_faults?: unknown[];
+}
+
+export interface GameAnalysis {
+  error?: string;
+  finished_at?: string;
+  cameras?: Partial<Record<GameEnd | string, AnalysisReport>>;
+}
+
+export interface Game {
+  id: string;
+  title: string;
+  connection: string;
+  scheduled_at: string;
+  court_mode: 'singles' | 'doubles';
+  status: GameStatus;
+  partner: UserBrief | null;
+  ends: Record<GameEnd, GameEndSlot>;
+  my_end: GameEnd | null;
+  my_camera: { id: string; token: string | null } | null;
+  started_at: string | null;
+  ended_at: string | null;
+  analysis_status: AnalysisStatus;
+  analysis: GameAnalysis | null;
+  created_at: string;
+}
+
+export async function getGames(params: { connection?: string; upcoming?: boolean } = {}) {
+  const q = new URLSearchParams();
+  if (params.connection) q.set('connection', params.connection);
+  if (params.upcoming) q.set('upcoming', '1');
+  const qs = q.toString();
+  return request<Game[]>(`/api/games/${qs ? `?${qs}` : ''}`);
+}
+
+export async function getGame(id: string) {
+  return request<Game>(`/api/games/${id}/`);
+}
+
+export async function scheduleGame(data: {
+  connection_id: string;
+  scheduled_at: string;
+  court_mode: 'singles' | 'doubles';
+  title?: string;
+}) {
+  return request<Game>('/api/games/', { method: 'POST', body: JSON.stringify(data) });
+}
+
+export async function cancelGame(id: string) {
+  return request<Game>(`/api/games/${id}/`, { method: 'DELETE' });
+}
+
+export async function claimGameEnd(id: string, end: GameEnd) {
+  return request<Game>(`/api/games/${id}/camera/`, { method: 'POST', body: JSON.stringify({ end }) });
+}
+
+export async function releaseGameEnd(id: string) {
+  return request<Game>(`/api/games/${id}/camera/`, { method: 'DELETE' });
+}
+
+export async function startGame(id: string) {
+  return request<Game>(`/api/games/${id}/start/`, { method: 'POST' });
+}
+
+export async function stopGame(id: string) {
+  return request<Game>(`/api/games/${id}/stop/`, { method: 'POST' });
+}
+
+// Developer view of games
+export interface DevGame {
+  id: string;
+  title: string;
+  scheduled_at: string;
+  court_mode: 'singles' | 'doubles';
+  status: GameStatus;
+  players: (UserBrief | null)[];
+  ends: Record<GameEnd, GameEndSlot>;
+  match_id: string;
+  recording_id: string;
+  recorded: number;
+  started_at: string | null;
+  ended_at: string | null;
+  analysis_status: AnalysisStatus;
+  analysis: GameAnalysis | null;
+  created_at: string;
+}
+
+export async function getDevGames(status?: GameStatus) {
+  return request<DevGame[]>(`/api/dev/games/${status ? `?status=${status}` : ''}`);
+}
+
+export async function getDevGame(id: string) {
+  return request<DevGame>(`/api/dev/games/${id}/`);
+}
+
+export async function analyzeDevGame(id: string) {
+  return request<DevGame>(`/api/dev/games/${id}/analyze/`, { method: 'POST' });
+}
+
+export async function stopDevGame(id: string) {
+  return request<DevGame>(`/api/dev/games/${id}/stop/`, { method: 'POST' });
+}
+
+export function devGameChartUrl(id: string, end: GameEnd) {
+  return `${API_URL}/api/dev/games/${id}/chart/${end}/`;
+}

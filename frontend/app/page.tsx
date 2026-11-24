@@ -3,6 +3,7 @@
 import { useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/lib/auth-context';
+import { homeFor } from '@/lib/roles';
 
 export default function Home() {
   const { user, loading } = useAuth();
@@ -11,7 +12,7 @@ export default function Home() {
   useEffect(() => {
     if (!loading) {
       if (user) {
-        router.replace('/app');
+        router.replace(homeFor(user.role));
       } else {
         router.replace('/login');
       }

@@ -31,6 +31,7 @@ urlpatterns = [
     path('api/', include('apps.connections.urls')),
     path('api/', include('apps.videos.urls')),
     path('api/', include('apps.live.urls')),
+    path('api/', include('apps.games.urls')),
     path('api/field/', include('apps.field.urls')),
     path('api/admin/', include('apps.users.admin_urls')),
 ]

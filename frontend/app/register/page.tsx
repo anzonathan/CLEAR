@@ -4,6 +4,7 @@ import { toast } from 'sonner';
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/lib/auth-context';
+import { homeFor } from '@/lib/roles';
 import Link from 'next/link';
 
 export default function RegisterPage() {
@@ -53,9 +54,10 @@ export default function RegisterPage() {
         throw new Error(errorMsg);
       }
 
-      await refetch(); // load the new session into auth context, else /app bounces to /login
+      // Load the new session into auth context first, else the target layout bounces to /login.
+      const me = await refetch();
       toast.success('Account created');
-      router.push('/app');
+      router.push(homeFor(me?.role));
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Registration failed');
     } finally {

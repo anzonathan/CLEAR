@@ -5,19 +5,20 @@ import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { useAuth } from '@/lib/auth-context';
+import { homeFor } from '@/lib/roles';
 import { getAdminStats, getAdminUsers, updateUserRole, deleteUser, AdminStats, AdminUser } from '@/lib/api';
 
 export default function AdminPage() {
-  const { user, loading: authLoading } = useAuth();
+  const { user, loading: authLoading, logout } = useAuth();
   const router = useRouter();
   const [stats, setStats] = useState<AdminStats | null>(null);
   const [users, setUsers] = useState<AdminUser[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    if (!authLoading && (!user || user.role !== 'admin')) {
-      router.replace('/app');
-    }
+    if (authLoading) return;
+    if (!user) router.replace('/login');
+    else if (user.role !== 'admin') router.replace(homeFor(user.role));
   }, [user, authLoading, router]);
 
   useEffect(() => {
@@ -112,12 +113,22 @@ export default function AdminPage() {
         </nav>
 
         <div style={{ marginTop: 'auto', paddingTop: '20px', borderTop: '1px solid rgba(255,255,255,0.1)' }}>
-          <Link href="/app" style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#a9bbb5', fontSize: '11px' }}>
-            <svg className="icon" width="16" height="16" viewBox="0 0 24 24">
-              <polyline points="15 18 9 12 15 6" />
+          <button
+            type="button"
+            onClick={async () => {
+              await logout();
+              toast.success('Signed out');
+              router.push('/login');
+            }}
+            style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#a9bbb5', fontSize: '11px', background: 'none', border: 0, cursor: 'pointer', padding: 0 }}
+          >
+            <svg className="icon" width="16" height="16" viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+              <polyline points="16 17 21 12 16 7" />
+              <line x1="21" y1="12" x2="9" y2="12" />
             </svg>
-            Back to App
-          </Link>
+            Sign out
+          </button>
         </div>
       </aside>
 

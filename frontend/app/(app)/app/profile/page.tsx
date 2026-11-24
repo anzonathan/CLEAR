@@ -67,22 +67,8 @@ export default function ProfilePage() {
           Settings
         </Link>
 
-        {user.role === 'admin' && (
-          <Link
-            href="/admin"
-            className="btn btn-secondary profile-action"
-          >
-            <svg className="icon" width="18" height="18" viewBox="0 0 24 24">
-              <rect x="3" y="3" width="7" height="7" />
-              <rect x="14" y="3" width="7" height="7" />
-              <rect x="14" y="14" width="7" height="7" />
-              <rect x="3" y="14" width="7" height="7" />
-            </svg>
-            Admin Dashboard
-          </Link>
-        )}
 
-        {(user.role === 'admin' || user.role === 'developer') && (
+        {user.role === 'developer' && (
           <Link
             href="/dev"
             className="btn btn-secondary profile-action"

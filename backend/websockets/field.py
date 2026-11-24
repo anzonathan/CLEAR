@@ -7,12 +7,18 @@ from django.conf import settings
 
 
 def get_field_manager():
-    """Get the field manager instance."""
-    try:
-        from src.capture.manager import FieldManager
-        return FieldManager(settings.CLEAR_DATA_DIR)
-    except ImportError:
-        return None
+    """The process-wide field manager shared with the REST views.
+
+    A fresh FieldManager here would have no running match, so ingested frames
+    would be dropped and viewers would never see the live runtime.
+    """
+    from apps.field.views import get_field_manager as shared
+    return shared()
+
+
+def is_dev(scope):
+    user = scope.get('user')
+    return bool(user and user.is_authenticated and getattr(user, 'role', '') in ('admin', 'developer'))
 
 
 class ViewStreamConsumer(AsyncWebsocketConsumer):
@@ -28,7 +34,7 @@ class ViewStreamConsumer(AsyncWebsocketConsumer):
         self.camera_id = self.scope['url_route']['kwargs']['camera_id']
 
         manager = get_field_manager()
-        if not manager or manager.get_camera(self.camera_id) is None:
+        if not is_dev(self.scope) or not manager or manager.get_camera(self.camera_id) is None:
             await self.accept()
             await self.close(code=1008)
             return
@@ -174,6 +180,9 @@ class MatchStreamConsumer(AsyncWebsocketConsumer):
     async def connect(self):
         """Handle WebSocket connection."""
         await self.accept()
+        if not is_dev(self.scope):
+            await self.close(code=1008)
+            return
         self.streaming = True
         asyncio.create_task(self.stream_loop())
 

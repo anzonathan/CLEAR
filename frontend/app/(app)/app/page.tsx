@@ -4,22 +4,26 @@ import { toast } from 'sonner';
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useAuth } from '@/lib/auth-context';
-import { getConnections, getActiveSessions, Connection, LiveSession } from '@/lib/api';
+import { getConnections, getActiveSessions, getGames, Connection, LiveSession, Game } from '@/lib/api';
+import GameRow from '@/components/GameRow';
 
 export default function HomePage() {
   const { user } = useAuth();
   const [connections, setConnections] = useState<Connection[]>([]);
   const [activeSessions, setActiveSessions] = useState<LiveSession[]>([]);
+  const [games, setGames] = useState<Game[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     async function fetchData() {
       try {
-        const [conns, sessions] = await Promise.all([
+        const [conns, sessions, upcoming] = await Promise.all([
           getConnections(),
           getActiveSessions(),
+          getGames({ upcoming: true }),
         ]);
         setConnections(conns);
+        setGames(upcoming);
         setActiveSessions(sessions);
       } catch (err) {
         toast.error('Could not load data', { description: err instanceof Error ? err.message : undefined });
@@ -90,6 +94,25 @@ export default function HomePage() {
         </div>
       )}
 
+      {games.length > 0 && (
+        <div className="panel home-games">
+          <div className="section-heading">
+            <h3>Upcoming games</h3>
+            <Link href="/app/games">View all</Link>
+          </div>
+          {games.slice(0, 3).map((g) => (
+            <GameRow
+              key={g.id}
+              href={`/app/games/${g.id}`}
+              title={g.title || `vs ${g.partner?.name ?? 'partner'}`}
+              subtitle={g.court_mode}
+              when={g.scheduled_at}
+              status={g.status}
+            />
+          ))}
+        </div>
+      )}
+
       <div className="panel home-connections">
         <div className="section-heading">
           <h3>Connections</h3>
@@ -139,18 +162,6 @@ export default function HomePage() {
         )}
       </div>
 
-      {user?.role === 'admin' && (
-        <Link
-          href="/admin"
-          className="btn btn-secondary home-admin"
-        >
-          <svg className="icon" width="16" height="16" viewBox="0 0 24 24">
-            <circle cx="12" cy="12" r="3" />
-            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z" />
-          </svg>
-          Admin Dashboard
-        </Link>
-      )}
     </div>
   );
 }

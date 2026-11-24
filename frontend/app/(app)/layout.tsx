@@ -5,6 +5,7 @@ import { useEffect } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
 import Link from 'next/link';
 import { useAuth } from '@/lib/auth-context';
+import { homeFor } from '@/lib/roles';
 
 function getInitials(name: string) {
   return name
@@ -21,9 +22,10 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
 
   useEffect(() => {
-    if (!loading && !user) {
-      router.replace('/login');
-    }
+    if (loading) return;
+    if (!user) router.replace('/login');
+    // Admins only use the admin dashboard. Developers are players too, so they stay.
+    else if (user.role === 'admin') router.replace(homeFor(user.role));
   }, [user, loading, router]);
 
   if (loading) {
@@ -38,15 +40,15 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
     );
   }
 
-  if (!user) {
+  if (!user || user.role === 'admin') {
     return null;
   }
 
   const tabs = [
     { path: '/app', icon: 'home', label: 'Home' },
-    { path: '/app/connections', icon: 'users', label: 'Connect' },
+    { path: '/app/games', icon: 'calendar', label: 'Games' },
     { path: '/app/pair', icon: 'plus', label: 'Pair' },
-    { path: '/app/videos', icon: 'video', label: 'Videos' },
+    { path: '/app/connections', icon: 'users', label: 'Connect' },
     { path: '/app/profile', icon: 'user', label: 'Profile' },
   ];
 
@@ -82,6 +84,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
                 {tab.icon === 'home' && <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z M9 22V12h6v10" />}
                 {tab.icon === 'users' && <><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" /><circle cx="9" cy="7" r="4" /><path d="M23 21v-2a4 4 0 0 0-3-3.87 M16 3.13a4 4 0 0 1 0 7.75" /></>}
                 {tab.icon === 'plus' && <><line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" /></>}
+                {tab.icon === 'calendar' && <><rect x="3" y="4" width="18" height="18" rx="2" ry="2" /><line x1="16" y1="2" x2="16" y2="6" /><line x1="8" y1="2" x2="8" y2="6" /><line x1="3" y1="10" x2="21" y2="10" /></>}
                 {tab.icon === 'video' && <><polygon points="23 7 16 12 23 17 23 7" /><rect x="1" y="5" width="15" height="14" rx="2" ry="2" /></>}
                 {tab.icon === 'user' && <><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" /><circle cx="12" cy="7" r="4" /></>}
               </svg>
@@ -91,15 +94,13 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
         </div>
 
         <div className="tabbar-user">
-          {user.role === 'admin' && (
-            <Link href="/admin" className="tabbar-admin">
+          {user.role === 'developer' && (
+            <Link href="/dev" className="tabbar-admin">
               <svg className="icon" width="18" height="18" viewBox="0 0 24 24" aria-hidden="true">
-                <rect x="3" y="3" width="7" height="7" />
-                <rect x="14" y="3" width="7" height="7" />
-                <rect x="14" y="14" width="7" height="7" />
-                <rect x="3" y="14" width="7" height="7" />
+                <polyline points="16 18 22 12 16 6" />
+                <polyline points="8 6 2 12 8 18" />
               </svg>
-              Admin dashboard
+              Developer tools
             </Link>
           )}
           <div className="tabbar-account">

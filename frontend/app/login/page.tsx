@@ -4,6 +4,7 @@ import { toast } from 'sonner';
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/lib/auth-context';
+import { homeFor } from '@/lib/roles';
 import Link from 'next/link';
 
 export default function LoginPage() {
@@ -43,9 +44,10 @@ export default function LoginPage() {
         throw new Error(data.detail || data.non_field_errors?.[0] || 'Login failed');
       }
 
-      await refetch(); // load the new session into auth context, else /app bounces to /login
+      // Load the new session into auth context first, else the target layout bounces to /login.
+      const me = await refetch();
       toast.success('Signed in');
-      router.push('/app');
+      router.push(homeFor(me?.role));
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Login failed');
     } finally {

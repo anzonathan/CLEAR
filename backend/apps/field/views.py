@@ -10,6 +10,8 @@ from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from apps.users.permissions import IsAdminOrDeveloper
+
 from .models import Camera, Recording
 from .serializers import (
     CameraSerializer,
@@ -41,7 +43,7 @@ class CameraViewSet(viewsets.ModelViewSet):
     """ViewSet for camera operations."""
 
     queryset = Camera.objects.all()
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAdminOrDeveloper]  # field console is a developer tool
 
     def get_serializer_class(self):
         if self.action == 'create':
@@ -185,7 +187,7 @@ class CameraViewSet(viewsets.ModelViewSet):
 class FieldDeactivateView(APIView):
     """Deactivate the active camera."""
 
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAdminOrDeveloper]  # field console is a developer tool
 
     def post(self, request):
         manager = get_field_manager()
@@ -197,7 +199,7 @@ class FieldDeactivateView(APIView):
 class FieldActiveView(APIView):
     """Get the active camera."""
 
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAdminOrDeveloper]  # field console is a developer tool
 
     def get(self, request):
         manager = get_field_manager()
@@ -212,7 +214,7 @@ class FieldActiveView(APIView):
 class FieldMatchView(APIView):
     """Match operations for two cameras."""
 
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAdminOrDeveloper]  # field console is a developer tool
 
     def get(self, request):
         """Get current match status."""
@@ -247,7 +249,7 @@ class FieldMatchView(APIView):
 class FieldMatchStopView(APIView):
     """Stop the current match."""
 
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAdminOrDeveloper]  # field console is a developer tool
 
     def post(self, request):
         manager = get_field_manager()
@@ -259,7 +261,7 @@ class FieldMatchStopView(APIView):
 class FieldMatchFusedView(APIView):
     """Get fused match data."""
 
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAdminOrDeveloper]  # field console is a developer tool
 
     def get(self, request):
         manager = get_field_manager()
@@ -276,7 +278,7 @@ class RecordingViewSet(viewsets.ModelViewSet):
 
     queryset = Recording.objects.all()
     serializer_class = RecordingSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAdminOrDeveloper]  # field console is a developer tool
 
     @action(detail=False, methods=['post'], url_path='start')
     def start(self, request):

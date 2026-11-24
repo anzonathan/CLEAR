@@ -4,7 +4,7 @@
 
 // WebSocket origin. Defaults to the page's own host: the nginx proxy routes /ws/ to the backend.
 // NEXT_PUBLIC_WS_URL is inlined at build time; a trailing "/ws" is stripped because paths add it.
-function resolveWsUrl(): string {
+export function resolveWsUrl(): string {
   const configured = (process.env.NEXT_PUBLIC_WS_URL || '').replace(/\/+$/, '').replace(/\/ws$/, '');
   if (configured) return configured;
   if (typeof window === 'undefined') return '';

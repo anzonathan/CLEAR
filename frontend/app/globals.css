@@ -815,19 +815,18 @@ body { background: var(--paper); }
   .app-shell .connection-row span { font-size: 13px; }
   .app-shell .connection-row .avatar-small { width: 38px; height: 38px; font-size: 12px; }
 
-  /* Home: hero across, live + connections side by side */
+  /* Home: hero across; games on the left, numbers on the right */
   .home-page {
     display: grid !important;
-    grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr);
+    grid-template-columns: minmax(0, 1.45fr) minmax(0, 1fr);
     align-content: start;
+    align-items: start;
   }
   .home-page > .topbar,
   .home-page > .home-hero { grid-column: 1 / -1; }
-  .home-page > .home-connections { grid-column: 1; grid-row: 3; }
-  .home-page > .home-live { grid-column: 2; grid-row: 3; align-self: start; }
-  .home-page:not(:has(.home-live)) > .home-connections,
-  .home-page > .home-admin { grid-column: 1 / -1; }
-  .home-page > .home-admin { justify-self: start; margin-top: 0; }
+  .home-page > .home-admin { grid-column: 1 / -1; justify-self: start; margin-top: 0; }
+  .home-col { display: flex; flex-direction: column; gap: 24px; min-width: 0; }
+  .home-col-side { position: sticky; top: 24px; }
 
   .home-hero {
     position: relative;
@@ -1739,4 +1738,165 @@ body { background: var(--paper); }
 
 @media (prefers-reduced-motion: reduce) {
   .lp-bounce { animation: none; }
+}
+
+/* ------------------------------------------------------------------ */
+/* Home dashboard: next game, numbers, activity, past games             */
+/* ------------------------------------------------------------------ */
+
+.home-page { height: auto; min-height: 100%; overflow: visible; }
+
+/* On phones the two columns dissolve into one ordered stack. */
+.home-col { display: contents; }
+.home-live { order: 1; }
+.home-next { order: 2; }
+.home-stats { order: 3; }
+.home-past { order: 4; }
+.home-activity { order: 5; }
+.home-games { order: 6; }
+.home-connections { order: 7; }
+
+.home-hero-line { margin-top: 8px; font-size: 11px; color: rgba(255,244,216,.72); }
+
+/* Next game: the one thing to act on */
+.home-next {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 18px;
+  border-radius: 16px;
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid transparent;
+  transition: border-color .18s ease-out, transform .18s ease-out;
+}
+a.home-next:hover { border-color: var(--primary); }
+a.home-next:active { transform: scale(.99); }
+.home-next h2 { font: 600 26px/1 'Oswald'; text-transform: uppercase; color: var(--primary); }
+.home-next-head { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
+.home-next-countdown {
+  font: 600 13px 'Oswald';
+  letter-spacing: .04em;
+  text-transform: uppercase;
+  color: var(--primary);
+  background: var(--accent);
+  padding: 4px 10px;
+  border-radius: 99px;
+  white-space: nowrap;
+}
+.home-next-when { font-size: 12px; font-weight: 600; color: var(--muted); }
+.home-next-ready { display: flex; flex-wrap: wrap; gap: 8px 16px; padding: 2px 0 4px; }
+.home-next-ready .dot-label { font-size: 11px; }
+.home-next-cta { align-self: flex-start; background: var(--primary); color: var(--white); min-height: 40px; }
+.home-next.is-live { background: var(--primary-deep); color: var(--surface); }
+.home-next.is-live h2 { color: var(--surface); }
+.home-next.is-live .eyebrow { color: var(--accent); }
+.home-next.is-live .home-next-when,
+.home-next.is-live .dot-label { color: rgba(255,244,216,.7); }
+.home-next.is-live .dot-label.on { color: var(--surface); }
+.home-next.is-live .home-next-cta { background: var(--error); }
+.home-next.is-empty { border: 1px dashed var(--border); background: transparent; align-items: flex-start; }
+.home-next.is-empty h2 { font-size: 22px; }
+
+/* Your numbers */
+.home-stats, .home-activity, .home-past, .home-games, .home-connections, .home-live { display: flex; flex-direction: column; gap: 8px; }
+.home-stat-grid { margin: 0; display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.home-stat-grid > div {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 12px;
+  border-radius: 12px;
+  background: var(--paper);
+  min-width: 0;
+}
+.home-stat-grid dt { font-size: 9px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+.home-stat-grid dd { margin: 0; font: 600 26px/1.1 'Oswald'; color: var(--primary); font-variant-numeric: tabular-nums; }
+.home-stat-grid dd small { font: 600 13px 'DM Sans'; color: var(--muted); }
+.home-stat-grid > div > small { font-size: 10px; color: var(--muted); }
+
+/* Activity: one series, brand green, 4px rounded data-ends on the baseline */
+.section-heading span.home-activity-sub { color: var(--muted); cursor: default; }
+.activity-chart { display: flex; flex-direction: column; gap: 6px; }
+.activity-plot {
+  position: relative;
+  height: 96px;
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: 1fr;
+  gap: 2px;
+  align-items: end;
+  border-bottom: 1px solid var(--border);
+  border-top: 1px dashed rgba(104,118,110,.25);
+  padding-right: 18px;
+}
+.activity-max { position: absolute; right: 0; top: -7px; font-size: 9px; font-weight: 600; color: var(--muted); background: var(--white); padding-left: 3px; }
+.activity-col { position: relative; height: 100%; display: flex; align-items: flex-end; justify-content: center; outline: none; cursor: default; }
+.activity-col i {
+  display: block;
+  width: min(100%, 22px);
+  background: var(--primary);
+  border-radius: 4px 4px 0 0;
+  transition: opacity .15s ease-out;
+}
+.activity-col:not(.is-current) i { opacity: .55; }
+.activity-plot:hover .activity-col i { opacity: .35; }
+.activity-plot:hover .activity-col:hover i,
+.activity-col:focus-visible i { opacity: 1; }
+.activity-col::after { content: ''; position: absolute; left: 50%; bottom: -4px; width: 3px; height: 3px; border-radius: 50%; background: var(--border); transform: translateX(-50%); }
+.activity-col.is-current::after { background: var(--secondary); }
+.activity-tip {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 50%;
+  transform: translateX(-50%);
+  white-space: nowrap;
+  padding: 5px 8px;
+  border-radius: 6px;
+  background: var(--primary-deep);
+  color: var(--surface);
+  font-size: 10px;
+  font-weight: 600;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity .12s ease-out;
+  z-index: 2;
+}
+.activity-col:first-child .activity-tip,
+.activity-col:nth-child(2) .activity-tip { left: 0; transform: none; }
+.activity-col:last-child .activity-tip { left: auto; right: 0; transform: none; }
+.activity-col:hover .activity-tip,
+.activity-col:focus-visible .activity-tip { opacity: 1; }
+.activity-axis { display: flex; justify-content: space-between; padding-right: 18px; font-size: 9px; font-weight: 600; color: var(--muted); }
+.activity-empty { padding-top: 2px; }
+
+/* Past games: result on the right */
+.past-result { display: flex; flex-direction: column; align-items: flex-end; gap: 1px; text-align: right; flex: none; }
+.connection-row .past-result b { font: 600 17px/1 'Oswald'; color: var(--primary); font-variant-numeric: tabular-nums; }
+.connection-row .past-result b small { font: 600 10px 'DM Sans'; color: var(--muted); }
+.connection-row .past-result span { font-size: 9px; color: var(--muted); white-space: nowrap; }
+.past-row .game-date { background: var(--paper); }
+
+@media (min-width: 960px) {
+  .home-col { display: flex; }
+  .home-hero-line { font-size: 15px; }
+  .app-shell .home-next.panel { padding: 28px; gap: 12px; background: var(--surface); border-color: transparent; }
+  .app-shell a.home-next.panel:hover { border-color: var(--primary); }
+  .app-shell .home-next.is-live.panel { background: var(--primary-deep); }
+  .app-shell .home-next.is-empty.panel { background: transparent; border: 1px dashed var(--border); }
+  .home-next h2 { font-size: 40px; }
+  .home-next.is-empty h2 { font-size: 28px; }
+  .home-next-when { font-size: 15px; }
+  .home-next-ready .dot-label { font-size: 13px; }
+  .home-next-countdown { font-size: 15px; padding: 5px 12px; }
+  .home-stat-grid dt { font-size: 10px; }
+  .home-stat-grid dd { font-size: 32px; }
+  .home-stat-grid > div > small { font-size: 12px; }
+  .section-heading span.home-activity-sub { font-size: 13px; }
+  .activity-plot { height: 140px; }
+  .activity-tip { font-size: 12px; }
+  .activity-axis { font-size: 11px; }
+  .connection-row .past-result b { font-size: 21px; }
+  .connection-row .past-result b small { font-size: 12px; }
+  .connection-row .past-result span { font-size: 12px; }
 }

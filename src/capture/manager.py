@@ -609,6 +609,9 @@ class FieldManager:
         self.runtime: Optional[FieldCameraRuntime] = None
         self.match_runtime: Optional[MatchRuntime] = None
         self.match_id: Optional[str] = None
+        # True while a match runtime only exists so a developer can calibrate the
+        # cameras before a game: frames flow, but nothing is recorded or announced.
+        self.match_preview: bool = False
         self.recording: Optional[RecordingSession] = None
         self._record_lock = threading.Lock()
         self._heartbeats: Dict[str, float] = {}
@@ -783,7 +786,7 @@ class FieldManager:
                 session.finalize()
 
     # ------------------------------------------------------------------ match
-    def start_match(self, camera_a_id: str, camera_b_id: str) -> Optional[Dict[str, object]]:
+    def start_match(self, camera_a_id: str, camera_b_id: str, preview: bool = False) -> Optional[Dict[str, object]]:
         if camera_a_id == camera_b_id:
             raise ValueError("A match needs two different cameras.")
         cameras: List[Dict[str, object]] = []
@@ -800,6 +803,7 @@ class FieldManager:
             with self._lock:
                 self.match_id = match_id
                 self.match_runtime = runtime
+                self.match_preview = preview
             runtime.start()
             return runtime.stats()
 
@@ -813,8 +817,13 @@ class FieldManager:
             old = self.match_runtime
             self.match_runtime = None
             self.match_id = None
+            self.match_preview = False
         if old is not None:
             old.stop()
+
+    def in_preview(self, camera_id: str) -> bool:
+        rt = self.match_runtime
+        return bool(self.match_preview and rt is not None and camera_id in rt.camera_ids)
 
     def match_stats(self) -> Optional[Dict[str, object]]:
         if self.match_runtime is None:
@@ -943,8 +952,10 @@ class FieldManager:
         path = self.registry.calibration_path(camera_id)
         cal.save(path)
         self.registry.update(camera_id, calib_method=method)
-        if self.active_id == camera_id and self.runtime is not None:
-            self.runtime.set_calibrator(cal)
+        # Apply to whichever runtime owns the camera, single-channel or match.
+        runtime = self._runtime_for(camera_id)
+        if runtime is not None:
+            runtime.set_calibrator(cal)
         return cal
 
     def auto_calibrate(self, camera_id: str) -> Dict[str, object]:
@@ -987,9 +998,10 @@ class FieldManager:
         }
 
     def _require_active_runtime(self, camera_id: str) -> FieldCameraRuntime:
-        if self.active_id != camera_id or self.runtime is None:
+        runtime = self._runtime_for(camera_id)
+        if runtime is None:
             raise ValueError("Camera is not active.")
-        return self.runtime
+        return runtime
 
     def _raw_frame(self, runtime: FieldCameraRuntime) -> Optional[np.ndarray]:
         with runtime.lock:

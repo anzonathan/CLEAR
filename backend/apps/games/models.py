@@ -74,3 +74,48 @@ class Game(models.Model):
         if self.camera_b_user_id == user.id:
             return 'end_b'
         return None
+
+
+class StreamSettings(models.Model):
+    """How phones encode frames for the referee. One row (pk=1), edited in dev tools.
+
+    Phones receive these live over their ingest socket, so a change applies to running
+    cameras within seconds. When `adaptive` is on, a phone on a slow link steps down
+    fps, then quality, then width, but never below the min_* floors: those floors are
+    what keeps the ball big and sharp enough for the detector.
+    """
+
+    width = models.PositiveIntegerField(default=1280)
+    quality = models.FloatField(default=0.75)
+    fps = models.PositiveIntegerField(default=8)
+
+    adaptive = models.BooleanField(default=True)
+    min_width = models.PositiveIntegerField(default=960)
+    min_quality = models.FloatField(default=0.65)
+    min_fps = models.PositiveIntegerField(default=4)
+
+    # YOLO input size. Applied when a game or calibration preview starts.
+    yolo_imgsz = models.PositiveIntegerField(default=640)
+
+    updated_at = models.DateTimeField(auto_now=True)
+    updated_by = models.ForeignKey('users.User', on_delete=models.SET_NULL, null=True, blank=True, related_name='+')
+
+    class Meta:
+        db_table = 'stream_settings'
+
+    @classmethod
+    def load(cls):
+        obj, _ = cls.objects.get_or_create(pk=1)
+        return obj
+
+    def to_client(self):
+        """The subset a phone needs."""
+        return {
+            'width': self.width,
+            'quality': self.quality,
+            'fps': self.fps,
+            'adaptive': self.adaptive,
+            'min_width': self.min_width,
+            'min_quality': self.min_quality,
+            'min_fps': self.min_fps,
+        }

@@ -5,7 +5,9 @@ Single-camera, anchor-calibrated computer vision for automated line calling and 
 **Course:** Computer Vision and Deep Learning, Six-Week Capstone Project (Advent 2026)
 **Group 1:** Andrea NABUUMA (B28112), Robert WANYAMA, Blair TONNY (B30009), Nathaniel MUGENYI (B28313)
 
-> **Project status: proposal stage.** The sections marked *(planned)* describe the interface we intend to deliver. Commands, file names and results will be filled in and verified as each week's work lands, and the final version of this file must be checked against a clean clone before submission.
+> **Project status: Milestone 4, web platform.** Two players film a game with their phones, the server runs two-camera detection live and records both ends, and developers calibrate cameras, tune streaming and analyse recordings from the browser (section 6b). Sections still marked *(planned)* describe the original proposal and are updated as work lands. Progress log: `MILESTONE.md`.
+>
+> **Quick links:** use the app: `Docs/USAGE.md` · run locally: `LOCAL_TEST.md` · deploy: `DEPLOY.md` · experiments: `Docs/zeroshot_experiment.md`, `Docs/platform_experiments.md`
 
 ## 1. Problem summary
 
@@ -23,7 +25,7 @@ Three conditions shape the design:
 | **Output** | Ball and player tracks; bounce points in court metres; IN/OUT call with margin (cm) and confidence; running score; player statistics |
 | **Primary CV task** | Small-object detection and multi-object tracking in video, with a homography to the court plane |
 | **Intended use** | Help players settle close calls and keep score. Calls inside the doubt zone near a line are flagged for replay and challenge |
-| **Will not** | Replace umpires in official matches, call lets or foot faults, identify players by face, work on other surfaces without retraining |
+| **Will not** | Replace umpires in official matches, identify players by face, work on other surfaces without retraining. Foot-fault and service-fault judging exist in the pipeline but are experimental and unvalidated |
 
 The full written proposal is in `docs/CVDL_Group01_ProjectProposal.pdf` (source: `.tex`).
 
@@ -111,25 +113,27 @@ python scripts/infer.py --video path/to/rally.mp4 --calib calib/session.json --o
 
 Inference writes an annotated video, a JSON file of bounce events (court coordinates, call, margin, confidence) and the running score.
 
-## 6b. Field-test console *(implemented)*
+## 6b. Web platform *(implemented, Milestone 4)*
 
-`/field` is a separate live-testing console for player, racket, ball and court
-overlays. It is designed for a Coolify deployment on a GPU machine.
+The system is a web app, deployed at `https://clear.ucu-dct.org`. It replaces the Milestone 2 FastAPI field console (`App/`, now retired).
 
-- **Channels:** add phone-browser cameras or RTSP streams. Only one channel is
-  decoded and inferred at a time. Activating another channel stops the previous
-  worker.
-- **Phone camera:** open `/camera/<token>` on a phone over HTTPS, start the
-  camera, then activate that channel. The phone tab must stay open and awake.
-- **Detections:** COCO `person`, `sports ball`, `tennis racket` plus the
-  clay HSV/3-frame ball fallback.
-- **Court calibration:** per-camera manual 4-corner tap, auto painted-line
-  suggestion, or optional segmentation weights via
-  `CLEAR_COURT_SEG_WEIGHTS`.
-- **Outputs:** annotated live view, snapshots, and per-session JSONL detection
-  events under `/data/sessions/`.
+**What it does**
 
-Deployment files: `Dockerfile`, `docker-compose.yml`, `docker-compose.cpu.yml`, `DEPLOY.md`, `deploy/coolify.md`.
+- **Players** pair with a code, then start or schedule a game. Each player claims one end of the court and films it with their phone's browser, with nothing to install. The game starts by itself once both cameras are steady, with a chime on each phone. Both ends are recorded.
+- **Developers** watch both feeds and a fused top-down court live. They calibrate each camera by clicking court points, set streaming quality with floors that keep the ball detectable, and run the full pipeline on recorded games.
+- **Admins** manage users from a separate dashboard.
+
+**Stack:** nginx proxy, Next.js 14 frontend, Django 5 + Channels backend running the capture, match and recording engine in `backend/src/capture/`, Postgres and Redis. It deploys with Docker Compose on Coolify. The backend uses an NVIDIA GPU when one is reserved, and falls back to CPU otherwise.
+
+```
+backend/apps/        users, connections (pairing), games (games, streaming settings), field (camera API), videos, live
+backend/src/         vision pipeline: calibration, detect, track, judge, score, capture
+backend/websockets/  phone ingest, live view and fused-match sockets
+frontend/app/        landing, auth, player app (/app), developer tools (/dev), admin (/admin)
+proxy/               nginx routing
+```
+
+How to use it: `Docs/USAGE.md`. Run it: `LOCAL_TEST.md`. Deploy it: `DEPLOY.md`. Platform experiments and measurements: `Docs/platform_experiments.md`.
 
 ## 7. Models
 

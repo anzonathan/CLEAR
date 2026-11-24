@@ -17,6 +17,7 @@ interface CamMeta {
 export function CameraFeed({ cameraId, label, who }: { cameraId: string; label: string; who?: string }) {
   const [src, setSrc] = useState<string | null>(null);
   const [meta, setMeta] = useState<CamMeta | null>(null);
+  const [stream, setStream] = useState<{ kbps?: number; width?: number; quality?: number; throttled?: boolean } | null>(null);
   const [state, setState] = useState<'connecting' | 'live' | 'waiting' | 'denied'>('connecting');
   const urlRef = useRef<string | null>(null);
 
@@ -30,7 +31,10 @@ export function CameraFeed({ cameraId, label, who }: { cameraId: string; label: 
         if (typeof ev.data === 'string') {
           try {
             const msg = JSON.parse(ev.data);
-            if (msg.type === 'meta') setMeta(msg.camera);
+            if (msg.type === 'meta') {
+              setMeta(msg.camera);
+              setStream(msg.stream ?? null);
+            }
             if (msg.type === 'state') setState('waiting');
           } catch {
             /* ignore */
@@ -74,6 +78,9 @@ export function CameraFeed({ cameraId, label, who }: { cameraId: string; label: 
           {meta?.inference_ms != null && <> · {Math.round(meta.inference_ms)} ms</>}
           {meta?.device && <> · {meta.device}</>}
           {Object.keys(det).length > 0 && <> · {Object.entries(det).map(([k, v]) => `${k} ${v}`).join(', ')}</>}
+          {stream?.kbps ? <> · {(stream.kbps / 1000).toFixed(1)} Mbps</> : null}
+          {stream?.width ? <> · {stream.width}px q{Math.round((stream.quality ?? 0) * 100)}</> : null}
+          {stream?.throttled && <> · <b className="warn">weak signal</b></>}
           {meta?.calibration && !meta.calibration.ready && <> · <b className="warn">uncalibrated</b></>}
         </span>
       </figcaption>

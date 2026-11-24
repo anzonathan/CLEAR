@@ -2,8 +2,63 @@
 
 import asyncio
 import json
+import time
+
+from channels.db import database_sync_to_async
 from channels.generic.websocket import AsyncWebsocketConsumer
 from django.conf import settings
+
+# Per-camera ingest stats, measured here (bytes) plus what the phone reports it is using.
+# Read by the dev Streaming page and the live view. In-process: one Daphne worker.
+_INGEST_STATS = {}
+# Byte/frame counters per camera, not per connection: a consumer dropped without a clean
+# disconnect (e.g. a Redis channel-layer timeout) must not report zeros for a live phone.
+_INGEST_ACC = {}
+_SETTINGS_CACHE = {'at': 0.0, 'value': None}
+
+
+def _count_frame(camera_id, nbytes):
+    acc = _INGEST_ACC.setdefault(camera_id, {'bytes': 0, 'frames': 0, 'since': time.time()})
+    acc['bytes'] += nbytes
+    acc['frames'] += 1
+
+
+def _roll_rates(camera_id):
+    """Turn the counters into rates once per window. Safe to call from any connection."""
+    now = time.time()
+    acc = _INGEST_ACC.setdefault(camera_id, {'bytes': 0, 'frames': 0, 'since': now})
+    span = now - acc['since']
+    if span < 3.0:  # long enough that one late frame does not swing the rate
+        return
+    st = _INGEST_STATS.setdefault(camera_id, {})
+    st.update({
+        'kbps': round(acc['bytes'] * 8 / 1000 / span, 1),
+        'fps': round(acc['frames'] / span, 1),
+        'avg_kb': round(acc['bytes'] / 1000 / acc['frames'], 1) if acc['frames'] else None,
+        'updated': now,
+    })
+    acc.update(bytes=0, frames=0, since=now)
+
+
+def ingest_snapshot():
+    """Stats for phones that reported in the last 10 s."""
+    now = time.time()
+    # 'seen' is set only by traffic from the phone itself, so zombie pushers cannot keep a gone phone listed.
+    return {cid: dict(st) for cid, st in _INGEST_STATS.items() if now - st.get('seen', 0) < 10}
+
+
+@database_sync_to_async
+def _load_stream_settings():
+    from apps.games.models import StreamSettings
+    return StreamSettings.load().to_client()
+
+
+async def stream_settings():
+    """Phone encoding settings, cached for 2 s so every pusher tick does not hit the DB."""
+    if _SETTINGS_CACHE['value'] is None or time.time() - _SETTINGS_CACHE['at'] > 2:
+        _SETTINGS_CACHE['value'] = await _load_stream_settings()
+        _SETTINGS_CACHE['at'] = time.time()
+    return _SETTINGS_CACHE['value']
 
 
 def get_field_manager():
@@ -92,7 +147,8 @@ class ViewStreamConsumer(AsyncWebsocketConsumer):
 
                 await self.send(text_data=json.dumps({
                     'type': 'meta',
-                    'camera': camera
+                    'camera': camera,
+                    'stream': _INGEST_STATS.get(self.camera_id),
                 }))
                 await asyncio.sleep(0.05)
 
@@ -146,10 +202,25 @@ class IngestStreamConsumer(AsyncWebsocketConsumer):
         if not manager:
             return
 
+        _INGEST_STATS.setdefault(self.camera_id, {})['seen'] = time.time()
         if bytes_data:
+            _count_frame(self.camera_id, len(bytes_data))
             manager.submit_jpeg(self.camera_id, bytes_data)
         elif text_data:
             manager.heartbeat(self.camera_id)
+            if text_data.startswith('{'):
+                # The phone reports the encoding it is actually using (adaptive may have stepped down).
+                try:
+                    msg = json.loads(text_data)
+                except json.JSONDecodeError:
+                    return
+                if msg.get('type') == 'stats':
+                    st = _INGEST_STATS.setdefault(self.camera_id, {})
+                    st.update({
+                        'width': msg.get('w'), 'height': msg.get('h'), 'quality': msg.get('q'),
+                        'target_fps': msg.get('fps'), 'throttled': bool(msg.get('throttled')),
+                        'updated': time.time(),
+                    })
 
     async def status_pusher(self):
         """Push status updates to the client."""
@@ -159,9 +230,14 @@ class IngestStreamConsumer(AsyncWebsocketConsumer):
 
         while self.connected:
             try:
+                _roll_rates(self.camera_id)
+
                 camera = manager.get_camera(self.camera_id)
                 await self.send(text_data=json.dumps({
                     'type': 'status',
+                    'stream': await stream_settings(),
+                    # 'preview' = developer is calibrating; the phone must not announce a game start.
+                    'mode': 'preview' if manager.in_preview(self.camera_id) else 'live',
                     'active': bool(camera and camera.get('active')),
                     'online': bool(camera and camera.get('online')),
                 }))

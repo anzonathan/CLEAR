@@ -96,3 +96,42 @@ class GameUpdateSerializer(serializers.ModelSerializer):
     class Meta:
         model = Game
         fields = ['title', 'scheduled_at', 'court_mode']
+
+
+class StreamSettingsSerializer(serializers.ModelSerializer):
+    updated_by = serializers.SerializerMethodField()
+
+    class Meta:
+        from .models import StreamSettings
+
+        model = StreamSettings
+        fields = [
+            'width', 'quality', 'fps', 'adaptive', 'min_width', 'min_quality', 'min_fps',
+            'yolo_imgsz', 'updated_at', 'updated_by',
+        ]
+        read_only_fields = ['updated_at', 'updated_by']
+        extra_kwargs = {
+            'width': {'min_value': 320, 'max_value': 1920},
+            'min_width': {'min_value': 320, 'max_value': 1920},
+            'quality': {'min_value': 0.3, 'max_value': 0.95},
+            'min_quality': {'min_value': 0.3, 'max_value': 0.95},
+            'fps': {'min_value': 1, 'max_value': 20},
+            'min_fps': {'min_value': 1, 'max_value': 20},
+            'yolo_imgsz': {'min_value': 320, 'max_value': 1920},
+        }
+
+    def get_updated_by(self, obj):
+        return obj.updated_by.name if obj.updated_by else None
+
+    def validate(self, data):
+        inst = self.instance
+        get = lambda k: data.get(k, getattr(inst, k) if inst else None)  # noqa: E731
+        if get('min_width') > get('width'):
+            raise serializers.ValidationError({'min_width': 'Floor cannot be above the resolution.'})
+        if get('min_quality') > get('quality'):
+            raise serializers.ValidationError({'min_quality': 'Floor cannot be above the quality.'})
+        if get('min_fps') > get('fps'):
+            raise serializers.ValidationError({'min_fps': 'Floor cannot be above the frame rate.'})
+        if get('yolo_imgsz') % 32:
+            raise serializers.ValidationError({'yolo_imgsz': 'Must be a multiple of 32.'})
+        return data

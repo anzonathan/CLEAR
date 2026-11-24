@@ -4,7 +4,7 @@ import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useParams } from 'next/navigation';
 import { toast } from 'sonner';
-import { analyzeDevGame, devGameChartUrl, getDevGame, stopDevGame, AnalysisReport, DevGame, GameEnd } from '@/lib/api';
+import { analyzeDevGame, devGameChartUrl, getDevGame, stopCalibrationPreview, stopDevGame, AnalysisReport, DevGame, GameEnd } from '@/lib/api';
 import { END_LABEL, formatWhen, STATUS_LABEL } from '@/lib/game-format';
 import { CameraFeed, LiveCourt } from '@/components/LiveFeeds';
 
@@ -19,6 +19,55 @@ function Stat({ label, value, unit }: { label: string; value: React.ReactNode; u
         {unit && <small> {unit}</small>}
       </dd>
     </div>
+  );
+}
+
+function CalibrationStrip({ game, onChange }: { game: DevGame; onChange: (g: DevGame) => void }) {
+  const previewing = !!(game.ends.end_a.camera?.preview || game.ends.end_b.camera?.preview);
+  return (
+    <section className="panel calib-strip" aria-label="Calibration">
+      {previewing && (
+        <div className="calib-strip-preview">
+          <span className="muted">Calibration preview running. The game will not start until it stops.</span>
+          <button
+            type="button"
+            className="btn btn-primary"
+            onClick={() =>
+              stopCalibrationPreview(game.id)
+                .then((g) => {
+                  onChange(g);
+                  toast.success('Preview stopped');
+                })
+                .catch((err) => toast.error(err.message))
+            }
+          >
+            Done: stop preview
+          </button>
+        </div>
+      )}
+      {ENDS.map((e) => {
+        const c = game.ends[e].camera;
+        return (
+          <div key={e} className="calib-strip-end">
+            <div>
+              <b>{END_LABEL[e]}</b>
+              <span className="muted">
+                {!c
+                  ? 'No camera yet'
+                  : c.calibrated
+                  ? `Calibrated (${c.calib_method ?? 'manual'}${c.reproj_error_cm != null ? ` · ${c.reproj_error_cm} cm` : ''})`
+                  : 'Not calibrated'}
+              </span>
+            </div>
+            {c && (
+              <Link href={`/dev/games/${game.id}/calibrate/${e}`} className={`btn ${c.calibrated ? 'btn-secondary' : 'btn-primary'}`}>
+                {c.calibrated ? 'Recalibrate' : 'Calibrate'}
+              </Link>
+            )}
+          </div>
+        );
+      })}
+    </section>
   );
 }
 
@@ -142,6 +191,8 @@ export default function DevGamePage() {
         <span className={`status-chip status-${game.status}`}>{STATUS_LABEL[game.status]}</span>
       </div>
 
+      {(game.status === 'live' || game.status === 'scheduled') && <CalibrationStrip game={game} onChange={setGame} />}
+
       {game.status === 'live' && (
         <div className="dev-live">
           <div className="dev-feeds">
@@ -191,7 +242,10 @@ export default function DevGamePage() {
               />
             ))}
           </dl>
-          <p className="muted">Live feeds appear here once the players start the game.</p>
+          <p className="muted">
+            Live feeds appear here once the players start the game. Calibrate both ends first: the game will not
+            auto-start while a calibration preview is running.
+          </p>
         </section>
       )}
 

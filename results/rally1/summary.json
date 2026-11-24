@@ -116,6 +116,9 @@
       }
     ]
   },
+  "fault_events": [],
+  "foot_faults": [],
+  "service_faults": [],
   "players": {
     "P1 (NEAR)": {
       "player_id": 1,

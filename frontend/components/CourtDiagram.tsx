@@ -14,16 +14,29 @@ export interface CourtPoint {
   y: number;
 }
 
+export interface CourtMark extends CourtPoint {
+  key: string;
+  state: 'done' | 'current' | 'todo';
+}
+
 export default function CourtDiagram({
   ball,
   trail = [],
   players = [],
+  marks = [],
   label,
+  topLabel = 'END A',
+  bottomLabel = 'END B',
+  onMarkClick,
 }: {
   ball?: (CourtPoint & { predicted?: boolean }) | null;
   trail?: CourtPoint[];
   players?: (CourtPoint & { id: string })[];
+  marks?: CourtMark[];
   label?: string;
+  topLabel?: string;
+  bottomLabel?: string;
+  onMarkClick?: (key: string) => void;
 }) {
   const inBounds = (p: CourtPoint) => p.x > -PAD && p.x < W + PAD && p.y > -PAD && p.y < L + PAD;
   const pts = trail.filter(inBounds);
@@ -39,8 +52,18 @@ export default function CourtDiagram({
         <line x1={W / 2} y1={SVC_FAR} x2={W / 2} y2={SVC_NEAR} />
       </g>
       <line className="court-net" x1={-0.9} y1={NET} x2={W + 0.9} y2={NET} />
-      <text className="court-end-label" x={W / 2} y={-0.6}>END A</text>
-      <text className="court-end-label" x={W / 2} y={L + 1.3}>END B</text>
+      <text className="court-end-label" x={W / 2} y={-0.6}>{topLabel}</text>
+      <text className="court-end-label" x={W / 2} y={L + 1.3}>{bottomLabel}</text>
+      {marks.map((m) => (
+        <circle
+          key={m.key}
+          className={`court-mark is-${m.state}`}
+          cx={m.x}
+          cy={m.y}
+          r={m.state === 'current' ? 0.55 : 0.38}
+          onClick={onMarkClick ? () => onMarkClick(m.key) : undefined}
+        />
+      ))}
       {pts.length > 1 && <polyline className="court-trail" points={pts.map((p) => `${p.x},${p.y}`).join(' ')} />}
       {players.filter(inBounds).map((p) => (
         <g key={p.id} className="court-player" transform={`translate(${p.x} ${p.y})`}>

@@ -61,8 +61,21 @@ services:
       CLEAR_RESULTS_DIR: /data/results
       CLEAR_CALIB_PATH: /data/calib/session.json
       CLEAR_YOLO_WEIGHTS: /app/models/yolov8n.pt
-      CLEAR_DEVICE: ${CLEAR_DEVICE:-auto}
+      CLEAR_DEVICE: ${CLEAR_DEVICE:-cuda}
       CLEAR_FIELD_PASSWORD: ${CLEAR_FIELD_PASSWORD:-}
+      CLEAR_DETECTOR_MODE: ${CLEAR_DETECTOR_MODE:-hybrid}
+      CLEAR_YOLO_IMGSZ: ${CLEAR_YOLO_IMGSZ:-640}
+      CLEAR_FIELD_TARGET_FPS: ${CLEAR_FIELD_TARGET_FPS:-15}
+      CLEAR_COURT_SEG_WEIGHTS: ${CLEAR_COURT_SEG_WEIGHTS:-}
+
+      # Email (console backend unless SMTP is configured)
+      EMAIL_BACKEND: ${EMAIL_BACKEND:-django.core.mail.backends.console.EmailBackend}
+      EMAIL_HOST: ${EMAIL_HOST:-localhost}
+      EMAIL_PORT: ${EMAIL_PORT:-587}
+      EMAIL_HOST_USER: ${EMAIL_HOST_USER:-}
+      EMAIL_HOST_PASSWORD: ${EMAIL_HOST_PASSWORD:-}
+      EMAIL_USE_TLS: ${EMAIL_USE_TLS:-True}
+      DEFAULT_FROM_EMAIL: ${DEFAULT_FROM_EMAIL:-CLEAR <noreply@clear.local>}
     volumes:
       - clear-data:/data
       - ./backend/media:/app/media
@@ -79,6 +92,15 @@ services:
       start_period: 30s
     restart: unless-stopped
     shm_size: 1gb
+    # NVIDIA GPU for detection. Needs nvidia-container-toolkit on the host.
+    # CLEAR_GPU_ID picks the card (host index); the container sees it as cuda:0.
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["${CLEAR_GPU_ID:-1}"]
+              capabilities: [gpu]
 
   frontend:
     build:

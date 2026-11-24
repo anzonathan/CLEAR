@@ -11,8 +11,16 @@ from apps.connections.models import Connection
 from apps.users.permissions import IsAdminOrDeveloper
 
 from . import services
-from .models import Game
-from .serializers import DevGameSerializer, GameCreateSerializer, GameSerializer, GameUpdateSerializer
+from rest_framework.views import APIView
+
+from .models import Game, StreamSettings
+from .serializers import (
+    DevGameSerializer,
+    GameCreateSerializer,
+    GameSerializer,
+    GameUpdateSerializer,
+    StreamSettingsSerializer,
+)
 
 
 def _error(exc):
@@ -129,6 +137,19 @@ class DevGameViewSet(viewsets.ReadOnlyModelViewSet):
             return _error(exc)
         return Response(self.get_serializer(game).data, status=status.HTTP_202_ACCEPTED)
 
+    @action(detail=True, methods=['post', 'delete'])
+    def preview(self, request, pk=None):
+        """POST starts both cameras for calibration without starting the game; DELETE stops them."""
+        game = self.get_object()
+        try:
+            if request.method == 'DELETE':
+                services.stop_preview(game)
+            else:
+                services.start_preview(game)
+        except services.GameError as exc:
+            return _error(exc)
+        return Response(self.get_serializer(game).data)
+
     @action(detail=True, methods=['post'])
     def stop(self, request, pk=None):
         """Let a developer end a live game, e.g. when players leave it running."""
@@ -148,3 +169,41 @@ class DevGameViewSet(viewsets.ReadOnlyModelViewSet):
         if not cam_id or not path.exists():
             raise Http404
         return FileResponse(open(path, 'rb'), content_type='image/png')
+
+
+class StreamSettingsView(APIView):
+    """Phone encoding settings. Developers read and change them; phones get them over the ingest socket."""
+
+    permission_classes = [IsAuthenticated, IsAdminOrDeveloper]
+
+    def get(self, request):
+        return Response(StreamSettingsSerializer(StreamSettings.load()).data)
+
+    def put(self, request):
+        obj = StreamSettings.load()
+        data = StreamSettingsSerializer(obj, data=request.data, partial=True)
+        data.is_valid(raise_exception=True)
+        data.save(updated_by=request.user)
+        return Response(data.data)
+
+    patch = put
+
+
+class StreamLiveView(APIView):
+    """What each connected phone is actually sending right now (measured on the server)."""
+
+    permission_classes = [IsAuthenticated, IsAdminOrDeveloper]
+
+    def get(self, request):
+        from websockets.field import ingest_snapshot
+
+        stats = ingest_snapshot()
+        games = Game.objects.filter(status__in=['scheduled', 'live']).select_related('camera_a_user', 'camera_b_user', 'connection__user_a', 'connection__user_b')
+        owners = {}
+        for g in games:
+            pair = f"{g.connection.user_a.name or g.connection.user_a.email} vs {g.connection.user_b.name or g.connection.user_b.email}"
+            for cam_id, end, user in ((g.camera_a_id, 'end_a', g.camera_a_user), (g.camera_b_id, 'end_b', g.camera_b_user)):
+                if cam_id:
+                    owners[cam_id] = {'game_id': g.id, 'game_status': g.status, 'pair': pair, 'end': end, 'player': user.name if user else None}
+        rows = [{'camera_id': cid, **owners.get(cid, {}), **st} for cid, st in stats.items()]
+        return Response({'cameras': rows})

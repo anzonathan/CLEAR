@@ -94,8 +94,11 @@ class HybridTennisDetector:
                 try:
                     import torch  # type: ignore
                     if not torch.cuda.is_available():
+                        # Loud, not silent: a missing GPU makes detection ~10x slower.
+                        print(f"[CLEAR] WARNING: CLEAR_DEVICE={device} but CUDA is not available; running on CPU.", flush=True)
                         return "cpu"
-                except Exception:
+                except Exception as exc:
+                    print(f"[CLEAR] WARNING: CLEAR_DEVICE={device} but torch failed to load CUDA ({exc}); running on CPU.", flush=True)
                     return "cpu"
             return device
         try:

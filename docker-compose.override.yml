@@ -7,3 +7,5 @@ services:
   backend:
     ports:
       - "8000:8000"
+    # No NVIDIA GPU on dev machines: drop the GPU reservation from docker-compose.yml.
+    deploy: !reset {}

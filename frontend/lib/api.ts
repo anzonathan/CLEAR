@@ -266,6 +266,10 @@ export interface CameraSlotState {
   active: boolean;
   fps?: number | null;
   calibrated?: boolean;
+  calib_method?: string | null;
+  reproj_error_cm?: number | null;
+  /** A developer is calibrating: cameras run, nothing is recorded. */
+  preview?: boolean;
   missing?: boolean;
 }
 
@@ -399,4 +403,88 @@ export async function stopDevGame(id: string) {
 
 export function devGameChartUrl(id: string, end: GameEnd) {
   return `${API_URL}/api/dev/games/${id}/chart/${end}/`;
+}
+
+export async function startCalibrationPreview(gameId: string) {
+  return request<DevGame>(`/api/dev/games/${gameId}/preview/`, { method: 'POST' });
+}
+
+export async function stopCalibrationPreview(gameId: string) {
+  return request<DevGame>(`/api/dev/games/${gameId}/preview/`, { method: 'DELETE' });
+}
+
+// Calibration: pixel positions of known court points in one camera's frame.
+export type AnchorsPx = Record<string, [number, number]>;
+
+export interface CalibrationInfo {
+  method: string;
+  anchors_px: AnchorsPx;
+  reproj_error_px: number;
+  reproj_error_cm: number;
+}
+
+export async function getCalibration(cameraId: string) {
+  return request<{ calibration: CalibrationInfo | null }>(`/api/field/cameras/${cameraId}/calibration/`);
+}
+
+export async function saveCalibration(cameraId: string, anchors_px: AnchorsPx, method = 'manual') {
+  return request<{ ok: boolean; method: string; anchors_px: AnchorsPx; reproj_error_cm: number }>(
+    `/api/field/cameras/${cameraId}/calibration/`,
+    { method: 'POST', body: JSON.stringify({ anchors_px, method }) }
+  );
+}
+
+export async function autoCalibrate(cameraId: string) {
+  return request<{ ok: boolean; confidence: number; note: string; anchors_px: AnchorsPx; reproj_error_cm: number | null }>(
+    `/api/field/cameras/${cameraId}/calibration/auto/`,
+    { method: 'POST' }
+  );
+}
+
+/** JPEG of the camera's latest frame. raw = without overlays (for clicking points). */
+export function cameraSnapshotUrl(cameraId: string, raw: boolean) {
+  return `${API_URL}/api/field/cameras/${cameraId}/snapshot.jpg/?raw=${raw}&t=${Date.now()}`;
+}
+
+// Streaming: how phones encode frames (Dev tools > Streaming)
+export interface StreamSettings {
+  width: number;
+  quality: number;
+  fps: number;
+  adaptive: boolean;
+  min_width: number;
+  min_quality: number;
+  min_fps: number;
+  yolo_imgsz: number;
+  updated_at?: string;
+  updated_by?: string | null;
+}
+
+export interface LiveStreamStat {
+  camera_id: string;
+  game_id?: string;
+  game_status?: GameStatus;
+  pair?: string;
+  end?: GameEnd;
+  player?: string | null;
+  kbps?: number;
+  fps?: number;
+  avg_kb?: number | null;
+  width?: number | null;
+  height?: number | null;
+  quality?: number | null;
+  target_fps?: number | null;
+  throttled?: boolean;
+}
+
+export async function getStreamSettings() {
+  return request<StreamSettings>('/api/dev/stream-settings/');
+}
+
+export async function saveStreamSettings(data: Partial<StreamSettings>) {
+  return request<StreamSettings>('/api/dev/stream-settings/', { method: 'PUT', body: JSON.stringify(data) });
+}
+
+export async function getLiveStreams() {
+  return request<{ cameras: LiveStreamStat[] }>('/api/dev/stream-settings/live/');
 }

@@ -1,97 +1,72 @@
-# Deploy CLEAR field console on Coolify
+# CLEAR on Coolify
 
-## 1. Host prerequisites (Dell Precision 5820)
+Step-by-step for the Coolify resource. The full reference (architecture, variables, data, security) is in `../DEPLOY.md`.
 
-```bash
-nvidia-smi
-docker run --rm --gpus all nvidia/cuda:12.4.1-base-ubuntu22.04 nvidia-smi
+## 1. Resource
+
+- **Type:** Docker Compose, from `https://github.com/anzonathan/CLEAR`
+- **Branch:** `main`
+- **Base directory:** `/`
+- **Compose file:** `/docker-compose.yml`
+
+Coolify runs only `docker-compose.yml`. It ignores `docker-compose.override.yml`, which holds the local-only ports and the local GPU removal.
+
+## 2. Domain
+
+Attach the domain to the **`proxy`** service only:
+
+```
+http://clear.ucu-dct.org:80
 ```
 
-If the second command fails (`could not select device driver "nvidia" with capabilities: [[gpu]]`), install the NVIDIA driver and `nvidia-container-toolkit`, then set `nvidia` as Docker's default runtime:
+Leave `postgres`, `redis`, `backend` and `frontend` without a domain. Do not add host port mappings: host port 8000 is Coolify's own dashboard, and 80 and 443 belong to Coolify's Traefik.
 
-```bash
-sudo nvidia-ctk runtime configure --runtime=docker --set-as-default
-sudo systemctl restart docker
+## 3. Cloudflare tunnel
+
+The tunnel runs on the host as a systemd service, configured in `/etc/cloudflared/config.yml`. Route the hostname to Traefik on port 80, the same way as the other Coolify apps on this server:
+
+```yaml
+  - hostname: clear.ucu-dct.org
+    service: http://localhost:80
 ```
 
-`docker-compose.yml` uses `CLEAR_DEVICE=auto` and `NVIDIA_VISIBLE_DEVICES=all` without a hard device reservation, so Coolify can still start the container on CPU if the NVIDIA runtime is not installed yet.
-
-## 2. Coolify application
-
-- Project: `CLEAR`
-- Resource: **Docker Compose** from `https://github.com/anzonathan/CLEAR`
-- Branch: `main`
-- Base directory: `/` (the repository root containing `docker-compose.yml`)
-- Compose file: `/docker-compose.yml`
-- Services: `postgres`, `redis`, `backend` (Django, :8000), `frontend` (Next.js, :3000), `proxy` (nginx, :80).
-- Domain: attach `https://clear.ucu-dct.org` to the **`proxy`** service, port `80`. Leave the other services without a domain.
-- No host ports are published in `docker-compose.yml`: host port 8000 is Coolify's own dashboard. `docker-compose.override.yml` (local only) publishes `8443` and `8000`; Coolify ignores it.
-- `proxy` routes `/` to the frontend and `/api/`, `/ws/`, `/django-admin/`, `/static/`, `/media/` to the backend.
-- Leave `NEXT_PUBLIC_WS_URL` unset: WebSockets use the page's own host.
-- Do not enable rolling updates. One replica only.
-- Persistent storage: compose-owned named volume `clear-data` mounted at `/data`.
-
-## 3. Environment variables
-
-| Variable | Default | Notes |
-|---|---|---|
-| `CLEAR_FIELD_PASSWORD` | empty | Set this. Protects `/field`, `/camera/*`, field APIs and WebSockets. |
-| `CLEAR_DEVICE` | `cuda` | Use `cpu` if the GPU is unavailable. |
-| `CLEAR_YOLO_IMGSZ` | `640` | 480 on CPU / low VRAM. |
-| `CLEAR_FIELD_TARGET_FPS` | `15` | Increase on a strong GPU. |
-| `CLEAR_FIELD_JPEG_QUALITY` | `72` | Lower to save bandwidth. |
-| `CLEAR_FIELD_MAX_WIDTH` | `960` | Inference + stream width cap. |
-| `CLEAR_RESULTS_DIR` | `/data/results` | Legacy studio artefacts. |
-| `CLEAR_CALIB_PATH` | `/data/calib/session.json` | Legacy single-camera calibration. |
-| `CLEAR_COURT_SEG_WEIGHTS` | empty | Optional court segmentation weights inside the container. |
-| `CLEAR_DETECTOR_MODE` | `hybrid` | `hybrid`, `yolo` or `classical`. |
-
-`CLEAR_YOLO_WEIGHTS` is fixed to `/app/models/yolov8n.pt`; the image bakes the COCO weights at build time.
-
-## 4. Cloudflare Tunnel / Ingress
-
-Point your ingress / tunnel hostname (`clear.<your-subdomain>`) to `http://localhost:8090` (or `http://127.0.0.1:8090`). Keep WebSockets enabled. Cloudflare supports the long-lived camera ingest/view sockets, but make sure no proxy rule buffers `text/event-stream` or WebSocket traffic.
-
-## 5. Phone camera
-
-1. Open `https://clear.<subdomain>/field`.
-2. Add a **Phone browser** channel.
-3. Copy the generated `/camera/<token>` link to a phone on the same tunnel.
-4. Open the link, tap **Start camera**, allow camera access.
-5. Activate the channel in the console. The phone switches from standby to sending frames.
-
-Only the active channel is decoded and inferred. Switching channels stops the previous worker and asks the old phone page to pause sending.
-
-## 6. Calibration
-
-Per camera:
-
-- **Manual 4 corners**: tap far-left, far-right, near-right, near-left.
-- **Auto lines**: painted-line suggestion. Verify the overlay.
-- **Segmentation**: requires `CLEAR_COURT_SEG_WEIGHTS`; no model is bundled.
-
-## 7. Health and logs
-
 ```bash
-curl https://clear.<subdomain>/api/health
-curl https://clear.<subdomain>/api/field/cameras
+sudo systemctl restart cloudflared
 ```
 
-Coolify runtime logs show Uvicorn. Field snapshots and event logs are under `/data/sessions/<camera_id>/`.
+## 4. Environment variables
 
-## 8. Local test
+Minimum for production:
 
-```bash
-uv run uvicorn App.server:app --host 0.0.0.0 --port 8090
-# or
-docker compose up --build
+```env
+DJANGO_SECRET_KEY=<long random string>
+DEBUG=False
+ALLOWED_HOSTS=clear.ucu-dct.org,localhost,127.0.0.1,backend
+CORS_ALLOWED_ORIGINS=https://clear.ucu-dct.org
+CSRF_TRUSTED_ORIGINS=https://clear.ucu-dct.org
+CLEAR_DEVICE=cuda
+CLEAR_GPU_ID=1
 ```
 
-Open `http://localhost:8090/field`.
+Leave `NEXT_PUBLIC_WS_URL` unset. Coolify refuses to delete a variable that the compose file still references, so it must not appear in `docker-compose.yml` either.
 
-## Notes / limits
+All other variables are optional; see `../DEPLOY.md` section 3.
 
-- `yolov8n.pt` is zero-shot COCO. Racket and ball detection will be weak on small/fast objects. This build is for field testing the capture/stream/overlay loop, not final accuracy.
-- Court "detection" is calibration, not a learned class. Segmentation needs trained weights.
-- Phone camera requires HTTPS and the tab to stay open/unlocked.
-- Snapshots + JSONL events are always on. Annotated MP4 recording is not implemented yet.
+## 5. GPU
+
+The backend reserves host GPU `CLEAR_GPU_ID` (default `1`) through `deploy.resources.reservations.devices` in `docker-compose.yml`. The host needs `nvidia-container-toolkit`. Test it with:
+
+```bash
+docker run --rm --gpus device=1 ubuntu nvidia-smi
+```
+
+## 6. Options
+
+- **Rolling updates:** off. Run **one replica**, because live camera state is held in the backend process.
+- **Storage:** the compose-owned volumes `clear_postgres_data` and `clear-data` persist across deploys.
+
+## 7. After the first deploy
+
+1. Change the seed passwords and delete `user@clear.local` (see `../DEPLOY.md` section 7).
+2. Sign in as a developer, open `/dev/streaming` and choose a preset for the court's connection.
+3. Run a test game with two phones. Calibrate both ends, and check that the feed stats show `cuda`.

@@ -86,20 +86,25 @@ export default function PairPage() {
         <p className="muted">Share a code or enter one to connect</p>
       </div>
 
-      <div className="pair-modes">
+      {/* A tab switch, not two buttons: the action button lives inside each panel. */}
+      <div className="segmented pair-modes" role="tablist" aria-label="Pairing method">
         <button
-          className={`btn ${mode === 'generate' ? 'btn-primary' : 'btn-secondary'}`}
-          style={{ flex: 1 }}
+          type="button"
+          role="tab"
+          aria-selected={mode === 'generate'}
+          className={mode === 'generate' ? 'active' : ''}
           onClick={() => setMode('generate')}
         >
-          Generate Code
+          Share my code
         </button>
         <button
-          className={`btn ${mode === 'join' ? 'btn-primary' : 'btn-secondary'}`}
-          style={{ flex: 1 }}
+          type="button"
+          role="tab"
+          aria-selected={mode === 'join'}
+          className={mode === 'join' ? 'active' : ''}
           onClick={() => setMode('join')}
         >
-          Enter Code
+          Enter a code
         </button>
       </div>
 

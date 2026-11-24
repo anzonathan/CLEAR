@@ -1,6 +1,7 @@
 """Bridge between Game rows and the in-process field manager (cameras, match runtime, recorder)."""
 
 import logging
+import os
 import threading
 from pathlib import Path
 
@@ -39,12 +40,16 @@ def camera_state(camera_id):
     cam = manager.get_camera(camera_id) if manager else None
     if cam is None:
         return {'id': camera_id, 'online': False, 'active': False, 'missing': True}
+    cal = cam.get('calibration') or {}
     return {
         'id': camera_id,
         'online': bool(cam.get('online')),
         'active': bool(cam.get('active')),
+        'preview': manager.in_preview(camera_id),
         'fps': cam.get('fps'),
-        'calibrated': bool((cam.get('calibration') or {}).get('ready')),
+        'calibrated': bool(cal.get('ready')),
+        'calib_method': cal.get('method'),
+        'reproj_error_cm': cal.get('reproj_error_cm'),
     }
 
 
@@ -98,6 +103,13 @@ def release_end(game, user, save=True):
     return game
 
 
+def apply_detector_settings():
+    """Runtimes read CLEAR_YOLO_IMGSZ when they start; set it from the dev settings first."""
+    from .models import StreamSettings
+
+    os.environ['CLEAR_YOLO_IMGSZ'] = str(StreamSettings.load().yolo_imgsz)
+
+
 def start_game(game):
     """Start live two-camera analysis and record both feeds.
 
@@ -121,6 +133,11 @@ def _start_locked(game):
         raise GameError('Another game is live right now. Try again when it ends.', status=409)
 
     manager = require_manager()
+    if manager.in_preview(game.camera_a_id) or manager.in_preview(game.camera_b_id):
+        raise GameError('A developer is calibrating the cameras. The game starts once they finish.', status=409)
+    if manager.match_preview:
+        manager.stop_match()  # a stale preview for another game must not block this one
+    apply_detector_settings()
     try:
         manager.start_match(game.camera_a_id, game.camera_b_id)
     except ValueError as exc:
@@ -135,6 +152,30 @@ def _start_locked(game):
     game.status = 'live'
     game.started_at = timezone.now()
     game.save()
+    return game
+
+
+def start_preview(game):
+    """Run both cameras without recording so a developer can calibrate before the game."""
+    if game.status != 'scheduled':
+        raise GameError('Preview is for games that have not started. Calibrate a live game directly.')
+    if not (game.camera_a_id and game.camera_b_id):
+        raise GameError('Both players need to pick an end first.')
+    if Game.objects.filter(status='live').exists():
+        raise GameError('A game is live. Preview would interrupt it.', status=409)
+    manager = require_manager()
+    apply_detector_settings()
+    try:
+        manager.start_match(game.camera_a_id, game.camera_b_id, preview=True)
+    except ValueError as exc:
+        raise GameError(str(exc))
+    return game
+
+
+def stop_preview(game):
+    manager = get_field_manager()
+    if manager and (manager.in_preview(game.camera_a_id) or manager.in_preview(game.camera_b_id)):
+        manager.stop_match()
     return game
 
 

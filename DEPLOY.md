@@ -1,195 +1,174 @@
-# CLEAR Deployment Guide (`DEPLOY.md`)
+# Deploying CLEAR
 
-Deployment reference for **CLEAR: Clay-court Line Evaluation and Automated Refereeing** — covering the live **Field Detection Console** (`/field`), **Phone Camera Node** (`/camera/<token>`), and **Analytics Studio** (`/`).
+Production reference for the CLEAR web platform at `https://clear.ucu-dct.org`. For Coolify-specific clicks, see `deploy/coolify.md`. For running on your own machine, see `LOCAL_TEST.md`.
 
----
+> The FastAPI field console in `App/` (`/field`, `/camera/<token>`, port 8090) is the Milestone 2 prototype and is **no longer deployed**. Its camera, match and recording engine (`backend/src/capture/`) now runs inside the Django backend.
 
-## 1. Architecture Overview
+## 1. Architecture
 
-| Component | Path | Purpose |
+```
+phone / browser ──https──> Cloudflare tunnel ──> host :80 (Coolify Traefik)
+                                                   │
+                                                   ▼
+                                     proxy (nginx :80)  ── only public entry point
+                                      │                         │
+                    /  (pages, Next.js rewrites)      /api/ /ws/ /django-admin/ /static/ /media/
+                                      ▼                         ▼
+                             frontend (Next.js :3000) ──> backend (Django + Channels on Daphne :8000)
+                                                                 │        │         │
+                                                            postgres    redis    /data volume
+                                                                                 (cameras, calibrations,
+                                                                                  recordings, analysis)
+```
+
+| Service | Image / build | Role |
 |---|---|---|
-| **Analytics Studio** | `/` | Post-point review, virtual court homography, synthetic/uploaded rally pipeline, IN/OUT line judge |
-| **Field Detection Console** | `/field` | Live single-active-channel console for player, racket, ball, and court overlays |
-| **Field Sign-In** | `/field/login` | Shared-password authentication gate (active when `CLEAR_FIELD_PASSWORD` is set) |
-| **Phone Camera Node** | `/camera/<token>` | Mobile browser WebRTC capture page pushing JPEG frames over WebSocket (`/ws/field/ingest/<id>`) |
-| **Health Check (Public)** | `/api/health` | Container health endpoint (`{"ok": true, "service": "clear", "field_ready": true}`) |
-| **Field Health Check** | `/api/field/health` | Field console state (`active_id`, `camera_count`, `auth_enabled`) |
+| `proxy` | `proxy/` (nginx 1.27) | Single entry point; routes pages to the frontend, API and WebSockets to the backend |
+| `frontend` | `frontend/` (Next.js 14 standalone) | Landing page, player app, developer tools, admin dashboard |
+| `backend` | `backend/` (Django 5, DRF, Channels, PyTorch) | Auth, pairing, games, phone ingest, live detection, recording, offline analysis |
+| `postgres` | `postgres:16-alpine` | Users, connections, games, stream settings |
+| `redis` | `redis:7-alpine` | Channels layer |
 
-**Key runtime constraint:** Run **1 worker (`--workers 1`) and 1 container replica only**. Active camera state, frame buffers, and WebSocket viewers live in-process. Only **one camera channel** is decoded and inferred at a time; switching channels stops the previous worker.
+**Run one backend replica only.** Live camera runtimes, the match fuser, recorders and per-phone streaming stats live in the backend process. This has two consequences:
 
----
+- Two replicas would split the phones between processes.
+- Only one game can be live at a time.
 
-## 2. Pre-Deployment Verification Checklist
+## 2. Host prerequisites
 
-Run these checks locally before pushing or deploying:
+The server (`dct1`) has two NVIDIA RTX A4000 cards with driver 595.91 and CUDA 13.2. The backend image ships `torch 2.15.0+cu132`, which matches.
 
-```bash
-# 1. Run full unit + integration + WebSocket test suite
-.venv/bin/pytest -v
+1. Check that Docker can reach the GPU:
 
-# 2. Validate Docker Compose manifests (default, GPU explicit, CPU override)
-docker compose -f docker-compose.yml config
-docker compose -f docker-compose.yml -f docker-compose.gpu.yml config
-docker compose -f docker-compose.yml -f docker-compose.cpu.yml config
+   ```bash
+   docker run --rm --gpus device=1 ubuntu nvidia-smi
+   ```
 
-# 3. Smoke-test Uvicorn production command locally
-.venv/bin/uvicorn App.server:app --host 127.0.0.1 --port 8090 --workers 1 --proxy-headers --forwarded-allow-ips "*"
+2. If that fails with `could not select device driver "nvidia"`, install `nvidia-container-toolkit` and register it with Docker:
+
+   ```bash
+   sudo apt-get install -y nvidia-container-toolkit
+   sudo nvidia-ctk runtime configure --runtime=docker
+   sudo systemctl restart docker
+   ```
+
+### GPU
+
+`docker-compose.yml` reserves one GPU for the backend:
+
+```yaml
+deploy:
+  resources:
+    reservations:
+      devices:
+        - driver: nvidia
+          device_ids: ["${CLEAR_GPU_ID:-1}"]
+          capabilities: [gpu]
 ```
 
-Verify health endpoints:
+- **Card:** the default is host GPU **1**, because GPU 0 is mostly taken by another workload (15.1 of 16 GB in use when checked). Inside the container the reserved card appears as `cuda:0`.
+- **Device setting:** `CLEAR_DEVICE` defaults to `cuda`.
+- **No GPU:** if CUDA is unavailable, the backend logs `[CLEAR] WARNING: CLEAR_DEVICE=cuda but CUDA is not available; running on CPU.` and carries on, about 10× slower.
+- **Check it:** open a live game in `/dev`. The feed stats should show `cuda`, not `cpu`.
 
-```bash
-curl -fsS http://127.0.0.1:8090/api/health
-curl -fsS http://127.0.0.1:8090/api/field/health
-```
+## 3. Environment variables
 
----
+Set these in Coolify, or in `.env` for plain Docker Compose.
 
-## 3. Host Prerequisites (GPU Server / Dell Precision 5820)
-
-Verify NVIDIA drivers and Docker GPU runtime on the host machine:
-
-```bash
-nvidia-smi
-docker run --rm --gpus all nvidia/cuda:12.4.1-base-ubuntu22.04 nvidia-smi
-```
-
-If Docker fails with `Error response from daemon: could not select device driver "nvidia" with capabilities: [[gpu]]`, install `nvidia-container-toolkit` on the host and set `nvidia` as Docker's default runtime:
-
-```bash
-curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey | sudo gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg \
-  && curl -s -L https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list | \
-    sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' | \
-    sudo tee /etc/apt/sources.list.d/nvidia-container-toolkit.list
-sudo apt-get update && sudo apt-get install -y nvidia-container-toolkit
-sudo nvidia-ctk runtime configure --runtime=docker --set-as-default
-sudo systemctl restart docker
-```
-
-> **Resilient Startup:** `docker-compose.yml` uses `CLEAR_DEVICE=auto` and `NVIDIA_VISIBLE_DEVICES=all` without a hard `driver: nvidia` reservation block. This guarantees Coolify can start the container even if `nvidia-container-toolkit` is not installed yet (automatically falling back to CPU), and automatically uses CUDA once `nvidia-ctk runtime configure --runtime=docker --set-as-default` is active.
-
----
-
-## 4. Coolify Deployment (Recommended Production Setup)
-
-### 4.1 Create Coolify Resource
-
-1. In Coolify, create a **Docker Compose** resource from `https://github.com/anzonathan/CLEAR`.
-2. Set configuration:
-   - **Branch:** `main`
-   - **Base Directory:** `/`
-   - **Docker Compose Location:** `/docker-compose.yml`
-   - **Service:** `clear-field`
-   - **Port:** `8090` (published as `${CLEAR_PORT:-8090}:8090`)
-3. **Important:** Keep replicas at `1` and disable rolling updates so two containers do not compete for the same camera stream.
-4. **Port separation:** CLEAR runs on port `8090` (both host and container) so it never conflicts with Coolify's dashboard on port `8000`.
-
-### 4.2 Environment Variables
-
-Configure these in Coolify (see `deploy/.env.example`):
-
-| Variable | Default | Description |
+| Variable | Default | Production value / notes |
 |---|---|---|
-| `CLEAR_PORT` | `8090` | Host port published by Docker Compose (`8090:8090`) |
-| `CLEAR_FIELD_PASSWORD` | *(empty)* | **Set in production.** Protects `/field`, `/camera/*`, `/api/field/*`, and `/ws/field/*` |
-| `CLEAR_DEVICE` | `auto` | Inference device (`auto` uses `cuda` when available, otherwise `cpu`) |
-| `CLEAR_YOLO_IMGSZ` | `640` | YOLO input image size (`640` on GPU, `480` on CPU) |
-| `CLEAR_FIELD_TARGET_FPS` | `15` | Target inference FPS cap (`15` on GPU, `8` on CPU) |
-| `CLEAR_FIELD_JPEG_QUALITY` | `72` | Annotated stream JPEG quality (`1`–`100`) |
-| `CLEAR_FIELD_MAX_WIDTH` | `960` | Max frame width before inference/streaming |
-| `CLEAR_DETECTOR_MODE` | `hybrid` | `hybrid` (YOLO + clay HSV/3-frame temporal), `yolo`, or `classical` |
-| `CLEAR_COURT_SEG_WEIGHTS` | *(empty)* | Optional path to custom court segmentation `.pt` weights inside container |
-| `CLEAR_DATA_DIR` | `/data` | Persistent storage root inside container |
-| `CLEAR_RESULTS_DIR` | `/data/results` | Output directory for Analytics Studio runs |
-| `CLEAR_CALIB_PATH` | `/data/calib/session.json` | Studio default calibration file path |
-| `CLEAR_YOLO_WEIGHTS` | `/app/models/yolov8n.pt` | Pre-baked COCO weights inside container image |
+| `DJANGO_SECRET_KEY` | insecure dev key | **Set a long random value** |
+| `DEBUG` | `True` | **Set `False`.** This also makes session and CSRF cookies `Secure` |
+| `ALLOWED_HOSTS` | `localhost,127.0.0.1,backend` | `clear.ucu-dct.org,localhost,127.0.0.1,backend` (keep `backend`: the frontend calls it internally) |
+| `CORS_ALLOWED_ORIGINS` | `http://localhost:8443` | `https://clear.ucu-dct.org` |
+| `CSRF_TRUSTED_ORIGINS` | `http://localhost:8443` | `https://clear.ucu-dct.org` |
+| `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | empty | Google sign-in, optional |
+| `EMAIL_BACKEND`, `EMAIL_HOST`, `EMAIL_PORT`, `EMAIL_HOST_USER`, `EMAIL_HOST_PASSWORD`, `EMAIL_USE_TLS`, `DEFAULT_FROM_EMAIL` | console backend | SMTP for account emails. Without it, emails go to the backend log |
+| `CLEAR_DEVICE` | `cuda` | `cpu` to force CPU |
+| `CLEAR_GPU_ID` | `1` | Host GPU index to reserve |
+| `CLEAR_DETECTOR_MODE` | `hybrid` | `hybrid`, `yolo` or `classical` |
+| `CLEAR_YOLO_IMGSZ` | `640` | Overridden by **Detector input** in `/dev/streaming` from the next game start |
+| `CLEAR_FIELD_TARGET_FPS` | `15` | Frame rate the recorder writes MP4s at |
+| `CLEAR_COURT_SEG_WEIGHTS` | empty | Optional court-segmentation weights for calibration |
 
-### 4.3 Ingress / Cloudflare Tunnel Routing
+Do **not** set `NEXT_PUBLIC_WS_URL`. WebSockets use the page's own host, and the proxy routes `/ws/` to the backend.
 
-- Point your Ingress / Cloudflare Tunnel hostname (`clear.<your-domain>`) directly to **`http://localhost:8090`** (or `http://127.0.0.1:8090`).
-- **HTTPS is mandatory** for phone cameras (`navigator.mediaDevices.getUserMedia` requires a secure context).
-- Ensure **WebSockets** are enabled (`Network -> WebSockets -> ON`) and no proxy rule buffers `/ws/field/*`.
+Phone encoding (resolution, quality, frame rate, adaptive floors) is **not** an environment variable. Developers set it in `/dev/streaming`, and it is stored in the database.
 
----
+## 4. Routing
 
-## 5. Standalone Docker Compose Deployment (Without Coolify)
+- **Coolify domain:** attach `http://clear.ucu-dct.org:80` to the **`proxy`** service only. The other services get no domain.
+- **Host ports:** none are published in `docker-compose.yml`. Coolify's own dashboard uses host port 8000, and its Traefik proxy uses 80 and 443.
+- **Cloudflare tunnel:** the tunnel runs on the host as a systemd service, configured in `/etc/cloudflared/config.yml`. It sends the hostname to Traefik on port 80, like the other Coolify apps:
 
-### 5.1 Default (Auto GPU/CPU)
+  ```yaml
+  - hostname: clear.ucu-dct.org
+    service: http://localhost:80
+  ```
+
+  Then run `sudo systemctl restart cloudflared`.
+
+WebSockets (`/ws/field/ingest/…`, `/ws/field/view/…`, `/ws/field/match/`) pass through Cloudflare and Traefik unchanged.
+
+## 5. Persistent data
+
+| Where | What |
+|---|---|
+| Volume `clear_postgres_data` | Database |
+| Volume `clear-data` at `/data` | Camera registry, calibrations, recordings and analysis output (layout below) |
+| Bind `./backend/media` at `/app/media` | Uploaded files |
+
+Layout of `/data`:
+
+```
+cameras.json                          camera registry (one camera per player per game end)
+cameras/<camera_id>/calib.json        calibration
+sessions/<camera_id>/                 snapshots, detection event logs
+recordings/<rec_id>/meta.json         recording index
+recordings/<rec_id>/<camera_id>_raw.mp4    raw feed (input to analysis)
+recordings/<rec_id>/<camera_id>_annot.mp4  annotated feed
+analysis/<game_id>/<camera_id>/       summary.json, bounces.json, court_analytics.png, annotated_rally.mp4
+```
+
+Recordings grow at roughly the upload rate of both phones. Clean old ones out periodically.
+
+## 6. Deploy
+
+1. Push to `main`.
+2. Redeploy in Coolify.
+3. On start, the backend applies migrations (`migrate`), runs `seed_users`, then starts Daphne.
+
+Check the deploy:
 
 ```bash
-cp deploy/.env.example .env
-docker compose up -d --build
+curl -fsS https://clear.ucu-dct.org/api/field/health/    # {"ok": true, ...}
 ```
 
-### 5.2 Explicit GPU Reservation Override
+Then:
 
-```bash
-docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d --build
-```
+1. Sign in.
+2. Open `/dev`.
+3. Start a test game with two phones.
+4. Confirm both feeds and the `cuda` device in the feed stats.
 
-### 5.3 CPU-Only Override (Lower Resolution/FPS Defaults)
+## 7. Security
 
-```bash
-docker compose -f docker-compose.yml -f docker-compose.cpu.yml up -d --build
-```
-
----
-
-## 6. Persistent Storage Layout (`/data`)
-
-The named Docker volume `clear-data` is mounted at `/data`:
-
-```text
-/data/
-  cameras.json                         # Registered camera channels, tokens, thresholds, overlay settings
-  cameras/
-    <camera_id>/
-      calib.json                       # Per-camera homography matrix + 4-corner anchors
-  sessions/
-    <camera_id>/
-      events.jsonl                     # Timestamped activate/deactivate/detection/snapshot telemetry
-      snapshots/
-        YYYYMMDD_HHMMSS_mmm.jpg        # Saved annotated snapshots
-        YYYYMMDD_HHMMSS_mmm_raw.jpg    # Saved raw snapshots
-  calib/
-    session.json                       # Analytics Studio calibration
-  results/
-    rally1/                            # Analytics Studio processed rally video + metrics
-```
-
----
-
-## 7. Field Operations Workflow
-
-### 7.1 Connect a Phone Camera
-
-1. Open `https://clear.<your-domain>/field` and sign in if `CLEAR_FIELD_PASSWORD` is enabled.
-2. Click **+ Add**, choose **Phone browser**, enter a court name (e.g. `UCU Court 1`), and click **Create channel**.
-3. Copy the generated `/camera/<token>` URL and open it on the tripod phone over HTTPS.
-4. On the phone, sign in if prompted, tap **Start camera**, and allow rear camera access. Keep the phone tab in the foreground and screen unlocked.
-5. In `/field`, click **Activate** on that channel. The phone transitions from `Standby` to `Live` and streams frames to the server.
-
-### 7.2 Connect an RTSP Camera
-
-1. Click **+ Add**, choose **RTSP stream**, and provide `rtsp://user:pass@host:554/stream`.
-2. Click **Activate** to start pulling and inferring the RTSP stream via FFmpeg.
-
-### 7.3 Calibrate the Court
-
-With a channel active and streaming video, click **Calibrate**:
-- **Manual 4 corners:** Tap court corners in clockwise order starting top-left: `far-left`, `far-right`, `near-right`, `near-left`, then click **Save 4-corner calibration**.
-- **Auto lines:** Runs Canny/Hough painted-line quad detection and applies suggested corners.
-- **Segmentation:** Uses `CLEAR_COURT_SEG_WEIGHTS` if configured.
-
----
+- **Seed accounts.** `backend/entrypoint.sh` runs `seed_users` on every start. It creates `admin@clear.local` / `admin123` (Django superuser), `dev@clear.local` / `dev123` and `user@clear.local` / `user123` if they are missing. The passwords are public in this repository.
+  - After the first deploy, change them: `python manage.py changepassword admin@clear.local` in the backend container terminal, and the same for the dev account.
+  - Delete `user@clear.local`.
+  - Changed passwords survive restarts. Deleted accounts come back on the next start.
+- **`DEBUG` defaults to `True`** in `docker-compose.yml`. Production must set `DEBUG=False`.
+- **Database password.** The Postgres password is fixed in `docker-compose.yml`. The database is not published to the host, but change the password if the server is shared.
+- **Field console access.** The field console API and the live view sockets are restricted to developers and admins. Phones authenticate to the ingest socket with a per-camera token, which only the player who claimed that end receives.
 
 ## 8. Troubleshooting
 
 | Symptom | Cause | Fix |
 |---|---|---|
-| `could not select device driver "nvidia" with capabilities: [[gpu]]` | Host Docker lacks `nvidia-container-toolkit` or GPU | Pull latest `docker-compose.yml` (no hard reservation) or run `sudo nvidia-ctk runtime configure --runtime=docker --set-as-default && sudo systemctl restart docker` on host |
-| Phone says `Camera requires HTTPS` | Opened via plain `http://<ip>` | Access `/camera/<token>` via `https://` domain or Cloudflare Tunnel |
-| Phone stays in `Standby` | Channel not activated in `/field` | Click **Activate** on the channel card in `/field` |
-| Phone link says `Camera link rejected` | Password changed or invalid token | Re-authenticate at `/field/login` and re-copy the phone link from `/field` |
-| `Auto lines` fails to find court | Worn clay lines or no frame yet | Wait for live video frame, or use **Manual 4 corners** |
-| Low FPS / high inference latency | Running on CPU or high resolution | Verify `CLEAR_DEVICE=cuda` & `nvidia-smi`, or lower `CLEAR_YOLO_IMGSZ=480` and `CLEAR_FIELD_TARGET_FPS=8` |
+| Deploy fails: `Bind for 0.0.0.0:8000 failed: port is already allocated` | A host port published in compose | Keep host ports out of `docker-compose.yml`; local ports belong in `docker-compose.override.yml` |
+| Deploy fails: `could not select device driver "nvidia"` | No NVIDIA container runtime | Install `nvidia-container-toolkit` (section 2) |
+| Site returns Cloudflare 502 | Tunnel points at a port nothing listens on | Tunnel to `http://localhost:80`; domain on `proxy` port 80 |
+| Login returns `Unexpected token 'I'… is not valid JSON` | Backend down, or frontend built with the wrong `BACKEND_URL` | Check backend logs; `BACKEND_URL` is a build argument (`http://backend:8000`) |
+| `CSRF Failed` on any form | Origin not trusted | Add the exact `https://` origin to `CSRF_TRUSTED_ORIGINS` and `CORS_ALLOWED_ORIGINS` |
+| Feed stats show `cpu` | GPU not reserved or not visible | Section 2; check `CLEAR_DEVICE` and the backend log warning |
+| `/dev/streaming` shows no phones while games run | Phones not streaming, or a second backend replica | Check the phone shows **Live**; run one replica only |

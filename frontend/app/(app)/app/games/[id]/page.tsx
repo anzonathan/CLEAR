@@ -48,7 +48,9 @@ export default function GamePage() {
     !!game &&
     game.status === 'scheduled' &&
     !!(game.ends.end_a.user && game.ends.end_b.user) &&
-    !!(game.ends.end_a.camera?.online && game.ends.end_b.camera?.online);
+    !!(game.ends.end_a.camera?.online && game.ends.end_b.camera?.online) &&
+    // Hold the auto-start while a developer is calibrating the cameras.
+    !(game.ends.end_a.camera?.preview || game.ends.end_b.camera?.preview);
 
   // Partner readiness and camera status change on the other phone: poll while it matters,
   // faster once both ends are claimed so the auto-start reacts quickly.
@@ -119,6 +121,7 @@ export default function GamePage() {
   const editable = game.status === 'scheduled';
   const bothClaimed = !!(game.ends.end_a.user && game.ends.end_b.user);
   const bothOnline = !!(game.ends.end_a.camera?.online && game.ends.end_b.camera?.online);
+  const calibrating = !!(game.ends.end_a.camera?.preview || game.ends.end_b.camera?.preview);
   const done = game.analysis_status === 'done' ? game.analysis?.cameras : null;
 
   return (
@@ -202,7 +205,9 @@ export default function GamePage() {
                 <li className={bothOnline ? 'ok' : ''}>Both cameras are on</li>
               </ul>
               <p className="muted" aria-live="polite">
-                {bothOnline
+                {calibrating
+                  ? 'A referee is calibrating the cameras. The game starts once they finish.'
+                  : bothOnline
                   ? 'Cameras are steady. Starting… your phone will chime when recording begins.'
                   : 'The game starts by itself once both cameras are on and steady. Your phone chimes when it begins.'}
               </p>

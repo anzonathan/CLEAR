@@ -16,7 +16,7 @@ def get_csrf_token(request):
 
 
 urlpatterns = [
-    path('admin/', admin.site.urls),
+    path('django-admin/', admin.site.urls),  # /admin is the frontend dashboard
 
     # CSRF token endpoint
     path('api/auth/csrf/', get_csrf_token),

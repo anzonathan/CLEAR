@@ -32,7 +32,7 @@ export default function ConnectionsPage() {
   };
 
   return (
-    <div className="screen-pad with-tabs">
+    <div className="screen-pad with-tabs connections-page">
       <div className="topbar">
         <h3>Connections</h3>
         <Link href="/app/pair" className="icon-button">
@@ -64,7 +64,7 @@ export default function ConnectionsPage() {
           </Link>
         </div>
       ) : (
-        <div>
+        <div className="panel connections-list">
           {connections.map((conn) => (
             <Link
               key={conn.id}

@@ -23,8 +23,11 @@ sudo systemctl restart docker
 - Branch: `main`
 - Base directory: `/` (the repository root containing `docker-compose.yml`)
 - Compose file: `/docker-compose.yml`
-- Port: `8090` (published on host `8090:8090` so it never conflicts with Coolify on `8000`)
-- Ingress / Tunnel target: `http://localhost:8090` (or Coolify domain -> service `clear-field`, port `8090`)
+- Services: `postgres`, `redis`, `backend` (Django, :8000), `frontend` (Next.js, :3000), `proxy` (nginx, :80).
+- Domain: attach `https://clear.ucu-dct.org` to the **`proxy`** service, port `80`. Leave the other services without a domain.
+- No host ports are published in `docker-compose.yml`: host port 8000 is Coolify's own dashboard. `docker-compose.override.yml` (local only) publishes `8443` and `8000`; Coolify ignores it.
+- `proxy` routes `/` to the frontend and `/api/`, `/ws/`, `/django-admin/`, `/static/`, `/media/` to the backend.
+- Leave `NEXT_PUBLIC_WS_URL` unset: WebSockets use the page's own host.
 - Do not enable rolling updates. One replica only.
 - Persistent storage: compose-owned named volume `clear-data` mounted at `/data`.
 

@@ -2,7 +2,16 @@
  * WebRTC client for live video sessions
  */
 
-const WS_URL = process.env.NEXT_PUBLIC_WS_URL || 'ws://localhost:8000';
+// WebSocket origin. Defaults to the page's own host: the nginx proxy routes /ws/ to the backend.
+// NEXT_PUBLIC_WS_URL is inlined at build time; a trailing "/ws" is stripped because paths add it.
+function resolveWsUrl(): string {
+  const configured = (process.env.NEXT_PUBLIC_WS_URL || '').replace(/\/+$/, '').replace(/\/ws$/, '');
+  if (configured) return configured;
+  if (typeof window === 'undefined') return '';
+  return `${window.location.protocol === 'https:' ? 'wss' : 'ws'}://${window.location.host}`;
+}
+
+const WS_URL = resolveWsUrl();
 
 export interface SignalingMessage {
   type: 'join' | 'offer' | 'answer' | 'ice-candidate' | 'leave' | 'error' | 'peer-joined' | 'peer-left';

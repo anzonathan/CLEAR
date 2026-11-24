@@ -39,7 +39,7 @@ export default function HomePage() {
   };
 
   return (
-    <div className="screen-pad with-tabs">
+    <div className="screen-pad with-tabs home-page">
       <div className="topbar">
         <h3>Dashboard</h3>
         <div className="icon-button">
@@ -64,7 +64,7 @@ export default function HomePage() {
       </div>
 
       {activeSessions.length > 0 && (
-        <div>
+        <div className="panel home-live">
           <div className="section-heading">
             <h3>Live Sessions</h3>
           </div>
@@ -89,7 +89,7 @@ export default function HomePage() {
         </div>
       )}
 
-      <div>
+      <div className="panel home-connections">
         <div className="section-heading">
           <h3>Connections</h3>
           <Link href="/app/connections">View all</Link>
@@ -141,8 +141,7 @@ export default function HomePage() {
       {user?.role === 'admin' && (
         <Link
           href="/admin"
-          className="btn btn-secondary"
-          style={{ marginTop: 'auto' }}
+          className="btn btn-secondary home-admin"
         >
           <svg className="icon" width="16" height="16" viewBox="0 0 24 24">
             <circle cx="12" cy="12" r="3" />

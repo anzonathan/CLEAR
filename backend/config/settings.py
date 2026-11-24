@@ -141,6 +141,9 @@ CSRF_COOKIE_HTTPONLY = False  # Allow JS to read CSRF cookie
 CSRF_COOKIE_SAMESITE = 'Lax'
 CSRF_COOKIE_SECURE = not DEBUG
 
+# Behind nginx (and Coolify's TLS proxy): trust the forwarded scheme so is_secure() is correct.
+SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
+
 # Session settings
 SESSION_COOKIE_HTTPONLY = True
 SESSION_COOKIE_SAMESITE = 'Lax'

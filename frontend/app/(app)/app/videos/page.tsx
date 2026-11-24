@@ -34,7 +34,7 @@ export default function VideosPage() {
   };
 
   return (
-    <div className="screen-pad with-tabs">
+    <div className="screen-pad with-tabs videos-page">
       <div className="topbar">
         <h3>Videos</h3>
         <Link href="/app/upload" className="icon-button">

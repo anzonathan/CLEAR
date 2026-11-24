@@ -55,7 +55,32 @@ export default function LoginPage() {
   };
 
   return (
-    <div className="app">
+    <div className="app auth-layout">
+      <aside className="auth-art" aria-hidden="true">
+        <div className="brand">
+          <div className="brand-mark">
+            <span></span>
+          </div>
+          CLEAR
+        </div>
+        <svg className="auth-court" viewBox="0 0 360 710" fill="none">
+          <rect x="30" y="30" width="300" height="650" rx="2" />
+          <line x1="67.5" y1="30" x2="67.5" y2="680" />
+          <line x1="292.5" y1="30" x2="292.5" y2="680" />
+          <line x1="67.5" y1="180" x2="292.5" y2="180" />
+          <line x1="67.5" y1="530" x2="292.5" y2="530" />
+          <line x1="180" y1="180" x2="180" y2="530" />
+          <line x1="180" y1="30" x2="180" y2="42" />
+          <line x1="180" y1="668" x2="180" y2="680" />
+          <line className="auth-net" x1="14" y1="355" x2="346" y2="355" />
+          <circle className="auth-ball" cx="241" cy="238" r="7" />
+          <path className="auth-trail" d="M150 520 Q 168 380 241 238" />
+        </svg>
+        <div className="auth-tagline">
+          <h1>Clay-court AI referee studio</h1>
+          <p>Pair with a partner, record from both ends of the court and review every call.</p>
+        </div>
+      </aside>
       <div className="screen-pad auth-screen">
         <div className="brand">
           <div className="brand-mark">
@@ -73,13 +98,7 @@ export default function LoginPage() {
 
         <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
           {error && (
-            <div style={{
-              background: 'rgba(217,76,61,0.1)',
-              borderLeft: '3px solid var(--error)',
-              padding: '10px',
-              fontSize: '11px',
-              color: 'var(--error)'
-            }}>
+            <div className="form-error" role="alert">
               {error}
             </div>
           )}
@@ -123,7 +142,7 @@ export default function LoginPage() {
                   display: 'flex',
                   alignItems: 'center',
                   justifyContent: 'center',
-                  color: 'var(--fg-dim)',
+                  color: 'var(--muted)',
                 }}
               >
                 {showPassword ? (

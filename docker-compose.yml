@@ -30,8 +30,8 @@ services:
 
   backend:
     build: ./backend
-    ports:
-      - "8000:8000"
+    expose:
+      - "8000"
     environment:
       # Django settings
       DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY:-django-insecure-dev-key-change-in-production}
@@ -85,14 +85,26 @@ services:
       context: ./frontend
       args:
         BACKEND_URL: http://backend:8000
-    ports:
-      - "8443:3000"
+    expose:
+      - "3000"
     environment:
       BACKEND_URL: http://backend:8000
       BACKEND_WS_URL: ws://backend:8000
       NEXT_PUBLIC_API_URL: ""
-      NEXT_PUBLIC_WS_URL: ${NEXT_PUBLIC_WS_URL:-ws://localhost:8000}
+      # Empty = same origin as the page (proxy routes /ws/ to backend).
+      NEXT_PUBLIC_WS_URL: ${NEXT_PUBLIC_WS_URL:-}
     depends_on:
+      - backend
+    restart: unless-stopped
+
+  # Public entry point. In Coolify, attach the domain to this service on port 80.
+  # No host ports here: they clash with Coolify (8000) and its proxy (80/443).
+  proxy:
+    build: ./proxy
+    expose:
+      - "80"
+    depends_on:
+      - frontend
       - backend
     restart: unless-stopped
 

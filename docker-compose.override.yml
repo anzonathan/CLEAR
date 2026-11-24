@@ -1,0 +1,9 @@
+# Local development only. `docker compose up` loads this automatically;
+# Coolify runs with `-f docker-compose.yml` and ignores it.
+services:
+  proxy:
+    ports:
+      - "8443:80"
+  backend:
+    ports:
+      - "8000:8000"

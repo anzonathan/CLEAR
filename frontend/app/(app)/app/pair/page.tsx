@@ -56,7 +56,7 @@ export default function PairPage() {
   };
 
   return (
-    <div className="screen-pad with-tabs">
+    <div className="screen-pad with-tabs pair-page">
       <div className="topbar">
         <button className="back-circle" onClick={() => router.back()}>
           <svg className="icon" width="18" height="18" viewBox="0 0 24 24">
@@ -80,7 +80,7 @@ export default function PairPage() {
         <p className="muted">Share a code or enter one to connect</p>
       </div>
 
-      <div style={{ display: 'flex', gap: '8px', marginBottom: '16px' }}>
+      <div className="pair-modes">
         <button
           className={`btn ${mode === 'generate' ? 'btn-primary' : 'btn-secondary'}`}
           style={{ flex: 1 }}
@@ -98,20 +98,13 @@ export default function PairPage() {
       </div>
 
       {error && (
-        <div style={{
-          background: 'rgba(217,76,61,0.1)',
-          borderLeft: '3px solid var(--error)',
-          padding: '10px',
-          fontSize: '11px',
-          color: 'var(--error)',
-          marginBottom: '12px'
-        }}>
+        <div className="form-error" role="alert">
           {error}
         </div>
       )}
 
       {mode === 'generate' ? (
-        <div className="pair-generate">
+        <div className="pair-generate panel">
           {generatedCode ? (
             <div className="code-display">
               <div className="code-value">{generatedCode}</div>
@@ -151,7 +144,7 @@ export default function PairPage() {
           </div>
         </div>
       ) : (
-        <form className="pair-join" onSubmit={handleJoin}>
+        <form className="pair-join panel" onSubmit={handleJoin}>
           <div className="field">
             <label>PAIR CODE</label>
             <div className="input-shell">

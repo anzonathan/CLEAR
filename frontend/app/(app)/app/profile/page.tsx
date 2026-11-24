@@ -25,7 +25,7 @@ export default function ProfilePage() {
   if (!user) return null;
 
   return (
-    <div className="screen-pad with-tabs">
+    <div className="screen-pad with-tabs profile-page">
       <div className="topbar">
         <h3>Profile</h3>
         <Link href="/app/settings" className="icon-button">
@@ -36,15 +36,15 @@ export default function ProfilePage() {
         </Link>
       </div>
 
-      <div style={{ textAlign: 'center', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px', padding: '20px 0' }}>
-        <div className="avatar" style={{ width: 70, height: 70, fontSize: 20 }}>
+      <div className="profile-id">
+        <div className="avatar avatar-large">
           {user.image ? (
             <img src={user.image} alt="" style={{ width: '100%', height: '100%', borderRadius: '50%' }} />
           ) : (
             getInitials(user.name || 'U')
           )}
         </div>
-        <h2 style={{ font: "600 25px/.98 'Oswald'", textTransform: 'uppercase', margin: 0 }}>
+        <h2>
           {user.name}
         </h2>
         <span className="muted">{user.email}</span>
@@ -53,11 +53,10 @@ export default function ProfilePage() {
         </span>
       </div>
 
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '16px' }}>
+      <div className="profile-actions">
         <Link
           href="/app/settings"
-          className="btn btn-secondary"
-          style={{ justifyContent: 'flex-start', padding: '0 16px' }}
+          className="btn btn-secondary profile-action"
         >
           <svg className="icon" width="18" height="18" viewBox="0 0 24 24">
             <circle cx="12" cy="12" r="3" />
@@ -69,8 +68,7 @@ export default function ProfilePage() {
         {user.role === 'admin' && (
           <Link
             href="/admin"
-            className="btn btn-secondary"
-            style={{ justifyContent: 'flex-start', padding: '0 16px' }}
+            className="btn btn-secondary profile-action"
           >
             <svg className="icon" width="18" height="18" viewBox="0 0 24 24">
               <rect x="3" y="3" width="7" height="7" />
@@ -85,8 +83,7 @@ export default function ProfilePage() {
         {(user.role === 'admin' || user.role === 'developer') && (
           <Link
             href="/dev"
-            className="btn btn-secondary"
-            style={{ justifyContent: 'flex-start', padding: '0 16px' }}
+            className="btn btn-secondary profile-action"
           >
             <svg className="icon" width="18" height="18" viewBox="0 0 24 24">
               <polyline points="16 18 22 12 16 6" />
@@ -98,8 +95,7 @@ export default function ProfilePage() {
 
         <button
           onClick={handleLogout}
-          className="btn btn-secondary"
-          style={{ justifyContent: 'flex-start', padding: '0 16px', color: 'var(--error)', marginTop: '12px' }}
+          className="btn btn-secondary profile-action profile-signout"
         >
           <svg className="icon" width="18" height="18" viewBox="0 0 24 24">
             <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />

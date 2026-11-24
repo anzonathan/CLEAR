@@ -20,6 +20,7 @@ from src.faults.foot_faults import FootFaultJudge
 from src.faults.service_faults import ServiceFaultJudge
 from src.judge.bounce_judge import BounceJudge
 from src.judge.hud_renderer import BroadcastHUDRenderer
+from src.orientation import ensure_landscape, landscape_size
 from src.score.score_engine import TennisScoreEngine
 from src.track.ball_tracker import BallState, KalmanBallTracker
 from src.track.player_tracker import PlayerTracker
@@ -250,8 +251,10 @@ class ClearPipeline:
         self.ball_tracker.fps = self.fps
         self.player_tracker.fps = self.fps
 
-        w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-        h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        w, h = landscape_size(
+            int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)),
+            int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)),
+        )
 
         video_out_file = out_path / "annotated_rally.mp4"
         fourcc = cv2.VideoWriter_fourcc(*"mp4v")
@@ -265,6 +268,7 @@ class ClearPipeline:
             if max_frames is not None and frame_idx >= max_frames:
                 break
 
+            frame = ensure_landscape(frame)
             annotated, _ = self.process_frame(frame, frame_idx=frame_idx)
             writer.write(annotated)
             frame_idx += 1

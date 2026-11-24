@@ -29,6 +29,7 @@ from src.calibration.homography import CourtCalibrator
 from src.capture.registry import CameraRegistry
 from src.capture.recorder import CameraRecorder, RecordingSession, get_recording, list_recordings
 from src.detect.detector import FrameDetections, HybridTennisDetector
+from src.orientation import ensure_landscape
 from src.track.match_fuser import FusedCameraInput, MatchFuser, project_fused_to_image
 
 
@@ -118,7 +119,7 @@ class FieldCameraRuntime:
 
     # ------------------------------------------------------------------ ingest
     def submit_frame(self, frame_bgr: np.ndarray) -> None:
-        frame = _resize_max_width(frame_bgr, self.max_width)
+        frame = _resize_max_width(ensure_landscape(frame_bgr), self.max_width)
         with self.lock:
             self.raw_frame = frame
             self.raw_seq += 1

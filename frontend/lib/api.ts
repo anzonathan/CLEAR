@@ -419,6 +419,8 @@ export interface DevGame {
   /** Which recordings exist per end (completed games only). */
   videos: Partial<Record<GameEnd, Record<VideoKind, boolean>>>;
   segments: VideoSegment[];
+  /** Scheduled games: why a developer can't start it yet ([] = both phones online, ready). */
+  start_blockers: string[] | null;
   started_at: string | null;
   ended_at: string | null;
   analysis_status: AnalysisStatus;
@@ -478,6 +480,11 @@ export function devGameVideoUrl(id: string, end: GameEnd, kind: VideoKind) {
 export function devGameExportUrl(id: string, segmentIds?: string[]) {
   const q = segmentIds && segmentIds.length ? `?segments=${segmentIds.map(encodeURIComponent).join(',')}` : '';
   return `${API_URL}/api/dev/games/${id}/export/${q}`;
+}
+
+/** Start a scheduled game for both players; the server refuses unless both phones are online. */
+export async function startDevGame(id: string) {
+  return request<DevGame>(`/api/dev/games/${id}/start/`, { method: 'POST' });
 }
 
 export async function stopDevGame(id: string) {

@@ -34,6 +34,10 @@ function GameTable({ games, empty }: { games: DevGame[]; empty: string }) {
           <div role="cell">
             {g.status === 'completed' ? (
               <span className={`status-chip analysis-${g.analysis_status}`}>{ANALYSIS_LABEL[g.analysis_status]}</span>
+            ) : g.status === 'scheduled' && g.start_blockers?.length === 0 ? (
+              <span className="status-chip analysis-done" title="Both phones are online: open the game to start it">
+                Ready to start
+              </span>
             ) : (
               <span className={`status-chip status-${g.status}`}>{STATUS_LABEL[g.status]}</span>
             )}

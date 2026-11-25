@@ -207,3 +207,71 @@ class DevGameApiTests(TestCase):
     def test_export_with_nothing_analysed(self):
         resp = self.client.get(self.url('export/'))
         self.assertEqual(resp.status_code, 400)
+
+
+class DevStartGameTests(TestCase):
+    """Developers can start a scheduled game only when both players' phones are online."""
+
+    def setUp(self):
+        from apps.connections.models import Connection
+
+        User = get_user_model()
+        self.dev = User.objects.create_user(email='dev@example.com', password='x', name='Dev', role='developer')
+        self.a = User.objects.create_user(email='a@example.com', password='x', name='Ana')
+        self.b = User.objects.create_user(email='b@example.com', password='x', name='Ben')
+        conn = Connection.objects.create(user_a=self.a, user_b=self.b)
+        self.game = Game.objects.create(
+            connection=conn, created_by=self.a, scheduled_at='2026-01-01T10:00Z', status='scheduled',
+            camera_a_id='camA', camera_a_user=self.a, camera_b_id='camB', camera_b_user=self.b,
+        )
+        self.online = {'camA': True, 'camB': False}
+        self.started = []
+        self.manager = SimpleNamespace(
+            get_camera=lambda cid: {'online': self.online.get(cid, False), 'active': True},
+            in_preview=lambda cid: False,
+            match_preview=False,
+            match_id='m1',
+            start_match=lambda a, b, preview=False: self.started.append((a, b)),
+            start_recording=lambda cams, name='': {'id': 'rec9'},
+        )
+        for target in ('apps.games.services.get_field_manager', 'apps.field.views.get_field_manager'):
+            p = mock.patch(target, return_value=self.manager)
+            p.start()
+            self.addCleanup(p.stop)
+        self.client = APIClient()
+        self.client.force_authenticate(self.dev)
+        self.url = f'/api/dev/games/{self.game.id}/start/'
+
+    def test_blocked_while_a_phone_is_offline(self):
+        detail = self.client.get(f'/api/dev/games/{self.game.id}/').json()
+        self.assertEqual(detail['start_blockers'], ["Ben's phone (End B) is offline."])
+        resp = self.client.post(self.url)
+        self.assertEqual(resp.status_code, 409)
+        self.assertIn("Ben's phone (End B) is offline.", resp.json()['error'])
+        self.game.refresh_from_db()
+        self.assertEqual(self.game.status, 'scheduled')
+        self.assertEqual(self.started, [])
+
+    def test_missing_player_is_reported(self):
+        Game.objects.filter(pk=self.game.pk).update(camera_b_id='', camera_b_user=None)
+        resp = self.client.post(self.url)
+        self.assertEqual(resp.status_code, 409)
+        self.assertIn('No player has taken End B yet.', resp.json()['error'])
+
+    def test_starts_when_both_online(self):
+        self.online['camB'] = True
+        detail = self.client.get(f'/api/dev/games/{self.game.id}/').json()
+        self.assertEqual(detail['start_blockers'], [])
+        resp = self.client.post(self.url)
+        self.assertEqual(resp.status_code, 200, resp.content)
+        self.assertEqual(resp.json()['status'], 'live')
+        self.assertIsNone(resp.json()['start_blockers'])
+        self.assertEqual(self.started, [('camA', 'camB')])
+        self.game.refresh_from_db()
+        self.assertEqual((self.game.status, self.game.recording_id, self.game.match_id), ('live', 'rec9', 'm1'))
+
+    def test_players_cannot_use_dev_start(self):
+        self.online['camB'] = True
+        player = APIClient()
+        player.force_authenticate(self.a)
+        self.assertEqual(player.post(self.url).status_code, 403)

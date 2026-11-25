@@ -59,12 +59,13 @@ class DevGameSerializer(serializers.ModelSerializer):
     ends = serializers.SerializerMethodField()
     recorded = serializers.SerializerMethodField()
     videos = serializers.SerializerMethodField()
+    start_blockers = serializers.SerializerMethodField()
 
     class Meta:
         model = Game
         fields = [
             'id', 'title', 'scheduled_at', 'court_mode', 'status', 'players', 'ends',
-            'match_id', 'recording_id', 'recorded', 'videos', 'segments', 'started_at', 'ended_at',
+            'match_id', 'recording_id', 'recorded', 'videos', 'segments', 'start_blockers', 'started_at', 'ended_at',
             'analysis_status', 'analysis', 'created_at',
         ]
 
@@ -79,6 +80,10 @@ class DevGameSerializer(serializers.ModelSerializer):
 
     def get_recorded(self, obj):
         return len(services.recording_files(obj)) if obj.status == 'completed' else 0
+
+    def get_start_blockers(self, obj):
+        """Scheduled games only: reasons a developer can't start it yet ([] = ready)."""
+        return services.start_blockers(obj) if obj.status == 'scheduled' else None
 
     def get_videos(self, obj):
         """Which recordings exist per end: {'end_a': {'raw': bool, 'annotated': bool}, ...}."""

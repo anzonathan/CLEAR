@@ -156,6 +156,35 @@ def _start_locked(game):
     return game
 
 
+def start_blockers(game):
+    """Why a developer can't start this game yet ([] = both players' phones are online)."""
+    if game.status != 'scheduled':
+        return ['Only scheduled games can be started.']
+    out = []
+    for end, cam_id, user in (
+        ('end_a', game.camera_a_id, game.camera_a_user),
+        ('end_b', game.camera_b_id, game.camera_b_user),
+    ):
+        if not cam_id:
+            out.append(f'No player has taken {END_LABEL[end]} yet.')
+            continue
+        state = camera_state(cam_id) or {}
+        who = user.name if user and user.name else 'The player'
+        if not state.get('online'):
+            out.append(f"{who}'s phone ({END_LABEL[end]}) is offline.")
+        elif state.get('preview'):
+            out.append(f'{END_LABEL[end]} is in a calibration preview. Stop it first.')
+    return out
+
+
+def dev_start_game(game):
+    """Start a scheduled game from dev tools, only when both players' phones are online."""
+    blockers = start_blockers(game)
+    if blockers:
+        raise GameError(' '.join(blockers), status=409)
+    return start_game(game)
+
+
 def start_preview(game):
     """Run both cameras without recording so a developer can calibrate before the game."""
     if game.status != 'scheduled':

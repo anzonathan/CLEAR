@@ -4,7 +4,7 @@ import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useParams } from 'next/navigation';
 import { toast } from 'sonner';
-import { analyzeDevGame, devGameChartUrl, getDevGame, stopCalibrationPreview, stopDevGame, AnalysisReport, DevGame, GameEnd } from '@/lib/api';
+import { analyzeDevGame, devGameChartUrl, getDevGame, startDevGame, stopCalibrationPreview, stopDevGame, AnalysisReport, DevGame, GameEnd } from '@/lib/api';
 import { END_LABEL, formatWhen, STATUS_LABEL } from '@/lib/game-format';
 import { CameraFeed, LiveCourt } from '@/components/LiveFeeds';
 import VideoTrimmer from '@/components/VideoTrimmer';
@@ -222,9 +222,29 @@ export default function DevGamePage() {
 
       {game.status === 'scheduled' && (
         <section className="panel">
-          <div className="section-heading">
+          <div className="section-heading dev-start-head">
             <h3>Waiting to start</h3>
+            <button
+              type="button"
+              className="btn btn-primary"
+              disabled={busy || !game.start_blockers || game.start_blockers.length > 0}
+              onClick={() =>
+                window.confirm(`Start this game now for ${pair}? Both phones begin live analysis and recording.`) &&
+                run(() => startDevGame(game.id), 'Game started')
+              }
+            >
+              Start game
+            </button>
           </div>
+          {game.start_blockers && game.start_blockers.length > 0 ? (
+            <ul className="dev-start-blockers" aria-label="Why the game can't start yet">
+              {game.start_blockers.map((b) => (
+                <li key={b}>{b}</li>
+              ))}
+            </ul>
+          ) : (
+            <p className="dev-start-ready">Both players&apos; phones are online. You can start the game for them.</p>
+          )}
           <dl className="stat-grid">
             {ENDS.map((e) => (
               <Stat
@@ -244,8 +264,8 @@ export default function DevGamePage() {
             ))}
           </dl>
           <p className="muted">
-            Live feeds appear here once the players start the game. Calibrate both ends first: the game will not
-            auto-start while a calibration preview is running.
+            Live feeds appear here once the game starts, either from the players&apos; phones or with Start game above.
+            Calibrate both ends first: the game will not start while a calibration preview is running.
           </p>
         </section>
       )}

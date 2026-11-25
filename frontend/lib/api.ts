@@ -296,15 +296,53 @@ export interface AnalysisReport {
     in_calls: number;
     out_calls: number;
     doubt_zone_calls: number;
+    bounces?: AnalysisBounce[];
   };
+  fault_events?: AnalysisFault[];
   foot_faults?: unknown[];
   service_faults?: unknown[];
+  /** Frame range actually analysed (absolute frames of the recording). */
+  segment?: { start_frame: number; end_frame: number; start_s: number; end_s: number };
+}
+
+export interface AnalysisBounce {
+  frame_idx: number;
+  call: 'IN' | 'OUT' | string;
+  is_in: boolean;
+  in_doubt_zone: boolean;
+  abs_margin_cm: number;
+  speed_kmh: number;
+}
+
+export interface AnalysisFault {
+  frame_idx: number;
+  fault_type: string;
+  status: string;
+  reason?: string;
+}
+
+/** A developer-marked time range of one end's recording. */
+export interface VideoSegment {
+  id: string;
+  end: GameEnd;
+  label: string;
+  start_s: number;
+  end_s: number;
+}
+
+export interface SegmentReport extends AnalysisReport {
+  end: GameEnd;
+  label: string;
+  start_s: number;
+  end_s: number;
+  finished_at?: string;
 }
 
 export interface GameAnalysis {
   error?: string;
   finished_at?: string;
   cameras?: Partial<Record<GameEnd | string, AnalysisReport>>;
+  segments?: Record<string, SegmentReport>;
 }
 
 export interface Game {
@@ -378,11 +416,28 @@ export interface DevGame {
   match_id: string;
   recording_id: string;
   recorded: number;
+  /** Which recordings exist per end (completed games only). */
+  videos: Partial<Record<GameEnd, Record<VideoKind, boolean>>>;
+  segments: VideoSegment[];
   started_at: string | null;
   ended_at: string | null;
   analysis_status: AnalysisStatus;
   analysis: GameAnalysis | null;
   created_at: string;
+}
+
+export type VideoKind = 'raw' | 'annotated';
+
+export interface VideoPrepare {
+  state: 'ready' | 'converting' | 'error';
+  error?: string;
+  kind: VideoKind;
+  end: GameEnd;
+  fps: number;
+  frames: number;
+  width: number;
+  height: number;
+  duration_s: number;
 }
 
 export async function getDevGames(status?: GameStatus) {
@@ -393,8 +448,36 @@ export async function getDevGame(id: string) {
   return request<DevGame>(`/api/dev/games/${id}/`);
 }
 
-export async function analyzeDevGame(id: string) {
-  return request<DevGame>(`/api/dev/games/${id}/analyze/`, { method: 'POST' });
+export async function analyzeDevGame(id: string, segmentIds?: string[]) {
+  return request<DevGame>(`/api/dev/games/${id}/analyze/`, {
+    method: 'POST',
+    body: JSON.stringify(segmentIds ? { segment_ids: segmentIds } : {}),
+  });
+}
+
+export async function saveDevGameSegments(id: string, segments: VideoSegment[]) {
+  return request<DevGame>(`/api/dev/games/${id}/segments/`, {
+    method: 'PUT',
+    body: JSON.stringify({ segments }),
+  });
+}
+
+/** Starts (or checks) the browser-playable conversion of a recording. Poll until state is ready. */
+export async function prepareDevGameVideo(id: string, end: GameEnd, kind: VideoKind) {
+  return request<VideoPrepare>(`/api/dev/games/${id}/video/${end}/prepare/`, {
+    method: 'POST',
+    body: JSON.stringify({ kind }),
+  });
+}
+
+export function devGameVideoUrl(id: string, end: GameEnd, kind: VideoKind) {
+  return `${API_URL}/api/dev/games/${id}/video/${end}/?kind=${kind}`;
+}
+
+/** ZIP for data analysis. No segment ids = every analysed run (full ends + segments). */
+export function devGameExportUrl(id: string, segmentIds?: string[]) {
+  const q = segmentIds && segmentIds.length ? `?segments=${segmentIds.map(encodeURIComponent).join(',')}` : '';
+  return `${API_URL}/api/dev/games/${id}/export/${q}`;
 }
 
 export async function stopDevGame(id: string) {

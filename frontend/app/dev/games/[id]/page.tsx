@@ -7,6 +7,7 @@ import { toast } from 'sonner';
 import { analyzeDevGame, devGameChartUrl, getDevGame, stopCalibrationPreview, stopDevGame, AnalysisReport, DevGame, GameEnd } from '@/lib/api';
 import { END_LABEL, formatWhen, STATUS_LABEL } from '@/lib/game-format';
 import { CameraFeed, LiveCourt } from '@/components/LiveFeeds';
+import VideoTrimmer from '@/components/VideoTrimmer';
 
 const ENDS: GameEnd[] = ['end_a', 'end_b'];
 
@@ -266,11 +267,12 @@ export default function DevGamePage() {
               disabled={busy || !game.recorded || game.analysis_status === 'running'}
               onClick={() => run(() => analyzeDevGame(game.id), 'Analysis started')}
             >
-              {game.analysis_status === 'running' ? 'Analysing…' : game.analysis_status === 'none' ? 'Analyse recording' : 'Run again'}
+              {game.analysis_status === 'running' ? 'Analysing…' : game.analysis?.cameras ? 'Run full again' : 'Analyse full recording'}
             </button>
           </div>
           {game.analysis_status === 'failed' && <p className="form-error">{game.analysis?.error ?? 'Analysis failed.'}</p>}
-          {game.analysis_status === 'done' && (
+          {game.recorded > 0 && <VideoTrimmer game={game} onGameChange={setGame} />}
+          {game.analysis?.cameras && (
             <div className="report-grid">
               {ENDS.map((e) => (reports[e] ? <ReportCard key={e} gameId={game.id} end={e} report={reports[e]!} /> : null))}
             </div>

@@ -56,6 +56,9 @@ class Game(models.Model):
 
     analysis_status = models.CharField(max_length=10, choices=ANALYSIS_CHOICES, default='none')
     analysis = models.JSONField(null=True, blank=True)
+    # Developer-marked time ranges of the recording, analysed/exported individually:
+    # [{id, end: 'end_a'|'end_b', label, start_s, end_s}]
+    segments = models.JSONField(default=list, blank=True)
 
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

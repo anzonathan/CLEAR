@@ -1740,3 +1740,71 @@ body { background: var(--paper); }
 @media (prefers-reduced-motion: reduce) {
   .lp-bounce { animation: none; }
 }
+
+/* Recording preview + segment trimmer (dev game page) */
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+.trimmer { gap: 14px !important; }
+.trimmer-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+.trimmer-head h3 { font: 600 19px 'Oswald'; text-transform: uppercase; }
+.trimmer-head .muted { font-size: 13px; margin-top: 4px; }
+.trimmer-switches { display: flex; gap: 10px; flex-wrap: wrap; }
+.trimmer-switches .segmented button { padding: 0 14px; }
+.trimmer-switches .segmented button:disabled { opacity: .4; cursor: not-allowed; }
+.trimmer-stage { position: relative; background: var(--primary-deep); border-radius: 12px; overflow: hidden; aspect-ratio: 16 / 9; display: grid; place-items: center; }
+.trimmer-stage video { width: 100%; height: 100%; object-fit: contain; display: block; cursor: pointer; background: #000; }
+.trimmer-placeholder { display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 24px; text-align: center; }
+.trimmer-placeholder .muted { color: #a9bbb5; font-size: 13px; }
+.trimmer-placeholder .loader i { background: var(--surface); }
+.trimmer-controls { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.trimmer-controls .btn { min-height: 38px; padding: 0 14px; font-variant-numeric: tabular-nums; }
+.trimmer-play { width: 44px; padding: 0 !important; }
+.trimmer-readout { display: flex; align-items: baseline; gap: 6px; margin: 0 6px; font-variant-numeric: tabular-nums; }
+.trimmer-readout b { font: 600 20px 'Oswald'; color: var(--primary); }
+.trimmer-readout span { font-size: 12px; color: var(--muted); }
+.trimmer-rate select { min-height: 38px; border: 1px solid var(--border); border-radius: 99px; padding: 0 12px; background: transparent; font: 600 12px 'DM Sans'; color: var(--text); }
+.trimmer-mark { display: flex; gap: 8px; margin-left: auto; }
+.trimmer-track { position: relative; height: 44px; border-radius: 8px; background: var(--paper); border: 1px solid var(--border); cursor: pointer; touch-action: none; overflow: hidden; }
+.trimmer-track.disabled { cursor: default; opacity: .6; }
+.trimmer-track:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+.trimmer-band { position: absolute; top: 6px; bottom: 6px; border-radius: 4px; opacity: .45; min-width: 2px; }
+.trimmer-band.selected { opacity: .85; box-shadow: inset 0 0 0 2px var(--primary-deep); }
+.trimmer-band.pending { background: repeating-linear-gradient(135deg, var(--secondary) 0 6px, transparent 6px 12px); opacity: .7; }
+.trimmer-marker { position: absolute; bottom: 3px; width: 8px; height: 8px; margin-left: -4px; border-radius: 50%; border: 1.5px solid var(--white); display: inline-block; }
+.trimmer-marker.in { background: #2f9e5b; }
+.trimmer-marker.out { background: var(--error); }
+.trimmer-marker.doubt { background: var(--secondary); }
+.trimmer-marker.fault { background: #7b4bd1; border-radius: 1px; transform: rotate(45deg); }
+.trimmer-playhead { position: absolute; top: 0; bottom: 0; width: 2px; margin-left: -1px; background: var(--primary-deep); pointer-events: none; }
+.trimmer-playhead::before { content: ''; position: absolute; top: -1px; left: -5px; border: 6px solid transparent; border-top-color: var(--primary-deep); }
+.trimmer-legend { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: 11px; align-items: center; }
+.trimmer-legend > span { display: inline-flex; align-items: center; gap: 6px; }
+.trimmer-legend .trimmer-marker { position: static; margin: 0; border-color: transparent; }
+.trimmer-keys { margin-left: auto; }
+.trimmer-keys kbd { font: 600 10px 'DM Sans'; padding: 1px 5px; border: 1px solid var(--border); border-bottom-width: 2px; border-radius: 4px; background: var(--white); color: var(--text); }
+.trimmer-segs h4 { font: 600 15px 'Oswald'; text-transform: uppercase; }
+.trimmer-save { font-size: 11px; font-weight: 700; color: var(--muted); }
+.trimmer-save.error { color: var(--error); }
+.trimmer-seg-list { list-style: none; margin: 8px 0 0; padding: 0; display: flex; flex-direction: column; }
+.trimmer-seg-list li { display: grid; grid-template-columns: auto auto minmax(120px, 1fr) auto auto; grid-template-areas: "check swatch label time status" ". . actions actions actions"; align-items: center; gap: 4px 10px; padding: 10px 8px; border-radius: 10px; box-shadow: inset 0 -1px 0 var(--border); }
+.trimmer-seg-list li.selected { background: var(--surface); }
+.trimmer-seg-list input[type="checkbox"] { grid-area: check; width: 16px; height: 16px; accent-color: var(--primary); }
+.trimmer-swatch { grid-area: swatch; width: 10px; height: 22px; border-radius: 3px; }
+.trimmer-label { grid-area: label; min-width: 0; border: 1px solid transparent; border-radius: 6px; padding: 5px 8px; background: transparent; font: 600 14px 'DM Sans'; color: var(--text); }
+.trimmer-label:hover, .trimmer-label:focus { border-color: var(--border); background: var(--white); outline: none; }
+.trimmer-time { grid-area: time; border: 0; background: none; padding: 0; font: 500 12px 'DM Sans'; color: var(--primary); cursor: pointer; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.trimmer-time small { color: var(--muted); }
+.trimmer-seg-status { grid-area: status; display: flex; align-items: center; gap: 8px; justify-self: end; }
+.trimmer-seg-status small { font-size: 11px; white-space: nowrap; }
+.trimmer-seg-actions { grid-area: actions; display: flex; gap: 2px; flex-wrap: wrap; }
+.trimmer-seg-actions .btn { min-height: 28px; padding: 0 10px; font-size: 11px; }
+.trimmer-seg-actions .btn.danger { color: var(--error); }
+.trimmer-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding-top: 4px; }
+.trimmer-actions .muted { font-size: 12px; }
+.trimmer-actions .btn { min-height: 40px; }
+.trimmer-actions-main { display: flex; gap: 8px; margin-left: auto; flex-wrap: wrap; }
+@media (max-width: 760px) {
+  .trimmer-mark, .trimmer-actions-main, .trimmer-keys { margin-left: 0; }
+  .trimmer-keys { display: none; }
+  .trimmer-seg-list li { grid-template-columns: auto auto minmax(0, 1fr); grid-template-areas: "check swatch label" ". time time" ". status status" ". actions actions"; }
+  .trimmer-seg-status { justify-self: start; }
+}

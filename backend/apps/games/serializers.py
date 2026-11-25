@@ -58,12 +58,13 @@ class DevGameSerializer(serializers.ModelSerializer):
     players = serializers.SerializerMethodField()
     ends = serializers.SerializerMethodField()
     recorded = serializers.SerializerMethodField()
+    videos = serializers.SerializerMethodField()
 
     class Meta:
         model = Game
         fields = [
             'id', 'title', 'scheduled_at', 'court_mode', 'status', 'players', 'ends',
-            'match_id', 'recording_id', 'recorded', 'started_at', 'ended_at',
+            'match_id', 'recording_id', 'recorded', 'videos', 'segments', 'started_at', 'ended_at',
             'analysis_status', 'analysis', 'created_at',
         ]
 
@@ -78,6 +79,23 @@ class DevGameSerializer(serializers.ModelSerializer):
 
     def get_recorded(self, obj):
         return len(services.recording_files(obj)) if obj.status == 'completed' else 0
+
+    def get_videos(self, obj):
+        """Which recordings exist per end: {'end_a': {'raw': bool, 'annotated': bool}, ...}."""
+        if obj.status != 'completed' or not obj.recording_id:
+            return {}
+        from apps.field.views import get_field_manager
+
+        from .media import KINDS, recording_path
+
+        manager = get_field_manager()
+        return {
+            end: {
+                kind: recording_path(manager, obj.recording_id, services.camera_for_end(obj, end), kind) is not None
+                for kind in KINDS
+            }
+            for end in ('end_a', 'end_b')
+        }
 
 
 class GameCreateSerializer(serializers.Serializer):

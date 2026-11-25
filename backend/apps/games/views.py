@@ -1,7 +1,8 @@
 """Game views: players schedule and film games; developers watch and analyse them."""
 
 from django.db.models import Q
-from django.http import FileResponse, Http404
+from django.http import FileResponse, Http404, HttpResponse
+from django.utils import timezone
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
@@ -10,7 +11,9 @@ from rest_framework.response import Response
 from apps.connections.models import Connection
 from apps.users.permissions import IsAdminOrDeveloper
 
-from . import services
+from apps.field.views import get_field_manager
+
+from . import media, services
 from rest_framework.views import APIView
 
 from .models import Game, StreamSettings
@@ -130,12 +133,73 @@ class DevGameViewSet(viewsets.ReadOnlyModelViewSet):
 
     @action(detail=True, methods=['post'])
     def analyze(self, request, pk=None):
+        """Analyse the whole recording, or only ``{"segment_ids": [...]}``."""
         game = self.get_object()
+        segment_ids = request.data.get('segment_ids') if isinstance(request.data, dict) else None
+        if segment_ids is not None and not isinstance(segment_ids, list):
+            return Response({'error': 'segment_ids must be a list.'}, status=400)
         try:
-            services.start_analysis(game)
+            services.start_analysis(game, segment_ids=[str(s) for s in segment_ids] if segment_ids is not None else None)
         except services.GameError as exc:
             return _error(exc)
         return Response(self.get_serializer(game).data, status=status.HTTP_202_ACCEPTED)
+
+    @action(detail=True, methods=['put'])
+    def segments(self, request, pk=None):
+        """Replace the game's segment list: ``{"segments": [{id, end, label, start_s, end_s}]}``."""
+        game = self.get_object()
+        try:
+            services.update_segments(game, request.data.get('segments') if isinstance(request.data, dict) else None)
+        except services.GameError as exc:
+            return _error(exc)
+        return Response(self.get_serializer(game).data)
+
+    def _recording(self, game, end, kind):
+        cam_id = services.camera_for_end(game, end)
+        src = media.recording_path(get_field_manager(), game.recording_id, cam_id, kind)
+        if src is None:
+            raise Http404
+        return src
+
+    @action(detail=True, methods=['post'], url_path=r'video/(?P<end>end_a|end_b)/prepare')
+    def video_prepare(self, request, pk=None, end=None):
+        """Start (or check) conversion of a recording to browser-playable H.264; poll until ready."""
+        game = self.get_object()
+        kind = request.data.get('kind', 'raw') if isinstance(request.data, dict) else 'raw'
+        if kind not in media.KINDS:
+            return Response({'error': 'kind must be raw or annotated.'}, status=400)
+        src = self._recording(game, end, kind)
+        state = media.prepare(src)
+        return Response({**state, 'kind': kind, 'end': end, **media.video_info(src)})
+
+    @action(detail=True, methods=['get'], url_path=r'video/(?P<end>end_a|end_b)')
+    def video(self, request, pk=None, end=None):
+        """Stream the converted recording with HTTP Range support (for seeking)."""
+        game = self.get_object()
+        kind = request.query_params.get('kind', 'raw')
+        if kind not in media.KINDS:
+            raise Http404
+        web = media.web_path(self._recording(game, end, kind))
+        if not web.exists():
+            return Response({'error': 'Video is not converted yet; call prepare first.'}, status=409)
+        return media.ranged_file_response(request, web)
+
+    @action(detail=True, methods=['get'])
+    def export(self, request, pk=None):
+        """ZIP bundle for data analysis. ``?segments=a,b`` limits it to those segments."""
+        game = self.get_object()
+        raw = request.query_params.get('segments')
+        segment_ids = [s for s in raw.split(',') if s] if raw else None
+        runs = services.export_runs(game, segment_ids)
+        if not runs:
+            return Response({'error': 'Nothing analysed to export yet.'}, status=400)
+        from src.analysis_export import build_bundle
+
+        data = build_bundle(runs, {'source': 'clear-dev-games', 'game_id': game.id})
+        stamp = timezone.now().strftime('%Y%m%d-%H%M%S')
+        resp = HttpResponse(data, content_type='application/zip')
+        resp['Content-Disposition'] = f'attachment; filename="clear-{game.id}-{stamp}.zip"'
+        return resp
 
     @action(detail=True, methods=['post', 'delete'])
     def preview(self, request, pk=None):

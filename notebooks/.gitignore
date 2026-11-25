@@ -1,0 +1,5 @@
+# Exported match data and generated comparisons stay local (they can contain player names).
+exports/*
+!exports/.gitkeep
+outputs/
+.ipynb_checkpoints/

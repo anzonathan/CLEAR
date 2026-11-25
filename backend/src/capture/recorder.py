@@ -25,6 +25,8 @@ class CameraRecorder:
         self._annot_writer: Optional[cv2.VideoWriter] = None
         self._size: Optional[tuple[int, int]] = None
         self.frame_count = 0
+        # Paused: frames are dropped, the files stay open and resume writing in place.
+        self.paused = False
         self.lock = threading.Lock()
 
     def _ensure_writer(self, frame: np.ndarray) -> None:
@@ -40,6 +42,8 @@ class CameraRecorder:
 
     def write(self, raw_frame: np.ndarray, annotated: np.ndarray) -> None:
         with self.lock:
+            if self.paused:
+                return
             self._ensure_writer(raw_frame)
             if self._raw_writer is not None and self._raw_writer.isOpened():
                 self._raw_writer.write(raw_frame)
@@ -79,6 +83,13 @@ class RecordingSession:
         self.recorders: Dict[str, CameraRecorder] = {}
         self.created_at = datetime.now(timezone.utc).isoformat()
         self.meta_path = self.dir / "meta.json"
+        self.paused = False
+
+    def set_paused(self, paused: bool) -> None:
+        self.paused = paused
+        for recorder in self.recorders.values():
+            with recorder.lock:
+                recorder.paused = paused
 
     def add_camera(self, camera_id: str) -> CameraRecorder:
         recorder = CameraRecorder(camera_id, self.dir, self.fps)

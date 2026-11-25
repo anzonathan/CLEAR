@@ -61,7 +61,7 @@ class GameViewSet(viewsets.ModelViewSet):
             return Response({'error': 'Connection not found'}, status=status.HTTP_404_NOT_FOUND)
         game = Game.objects.create(
             connection=connection, created_by=request.user, scheduled_at=v['scheduled_at'],
-            court_mode=v['court_mode'], title=v.get('title', ''),
+            court_mode=v['court_mode'], title=v.get('title', ''), dev_mode=v.get('dev_mode', False),
         )
         return Response(self.get_serializer(game).data, status=status.HTTP_201_CREATED)
 
@@ -223,6 +223,27 @@ class DevGameViewSet(viewsets.ReadOnlyModelViewSet):
         except services.GameError as exc:
             return _error(exc)
         return Response(self.get_serializer(game).data)
+
+    @action(detail=True, methods=['post'])
+    def record(self, request, pk=None):
+        """``{"action": "start" | "pause" | "resume"}`` for a live game's recording (one file per game)."""
+        game = self.get_object()
+        act = request.data.get('action') if isinstance(request.data, dict) else None
+        try:
+            game = services.dev_record(game, act)
+        except services.GameError as exc:
+            return _error(exc)
+        return Response(self.get_serializer(game).data)
+
+    @action(detail=True, methods=['post'], url_path='next')
+    def next_game(self, request, pk=None):
+        """End this live game and start a new one for the same players and cameras."""
+        game = self.get_object()
+        try:
+            nxt = services.dev_next_game(game)
+        except services.GameError as exc:
+            return _error(exc)
+        return Response(self.get_serializer(nxt).data, status=status.HTTP_201_CREATED)
 
     @action(detail=True, methods=['post'])
     def stop(self, request, pk=None):

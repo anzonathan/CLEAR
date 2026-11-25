@@ -253,6 +253,8 @@ export async function getFieldHealth() {
 export type GameEnd = 'end_a' | 'end_b';
 export type GameStatus = 'scheduled' | 'live' | 'completed' | 'cancelled';
 export type AnalysisStatus = 'none' | 'running' | 'done' | 'failed';
+/** Live: off | recording | paused. Over: saved | none. */
+export type RecordingState = 'off' | 'recording' | 'paused' | 'saved' | 'none';
 
 export interface UserBrief {
   id: string;
@@ -360,6 +362,11 @@ export interface Game {
   ended_at: string | null;
   analysis_status: AnalysisStatus;
   analysis: GameAnalysis | null;
+  /** Data-collection game: a developer starts, pauses and resumes the recording. */
+  dev_mode: boolean;
+  /** Set when a developer rolled this game into a next one on the same cameras. */
+  next_game_id: string | null;
+  recording_state: RecordingState;
   created_at: string;
 }
 
@@ -380,6 +387,7 @@ export async function scheduleGame(data: {
   scheduled_at: string;
   court_mode: 'singles' | 'doubles';
   title?: string;
+  dev_mode?: boolean;
 }) {
   return request<Game>('/api/games/', { method: 'POST', body: JSON.stringify(data) });
 }
@@ -425,6 +433,11 @@ export interface DevGame {
   ended_at: string | null;
   analysis_status: AnalysisStatus;
   analysis: GameAnalysis | null;
+  /** Data-collection game: a developer starts, pauses and resumes the recording. */
+  dev_mode: boolean;
+  /** Set when a developer rolled this game into a next one on the same cameras. */
+  next_game_id: string | null;
+  recording_state: RecordingState;
   created_at: string;
 }
 
@@ -485,6 +498,16 @@ export function devGameExportUrl(id: string, segmentIds?: string[]) {
 /** Start a scheduled game for both players; the server refuses unless both phones are online. */
 export async function startDevGame(id: string) {
   return request<DevGame>(`/api/dev/games/${id}/start/`, { method: 'POST' });
+}
+
+/** Developer recording control for a live game (one file per game). */
+export async function recordDevGame(id: string, action: 'start' | 'pause' | 'resume') {
+  return request<DevGame>(`/api/dev/games/${id}/record/`, { method: 'POST', body: JSON.stringify({ action }) });
+}
+
+/** End this live game and start a new one for the same players and cameras; returns the new game. */
+export async function nextDevGame(id: string) {
+  return request<DevGame>(`/api/dev/games/${id}/next/`, { method: 'POST' });
 }
 
 export async function stopDevGame(id: string) {

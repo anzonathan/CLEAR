@@ -275,3 +275,153 @@ class DevStartGameTests(TestCase):
         player = APIClient()
         player.force_authenticate(self.a)
         self.assertEqual(player.post(self.url).status_code, 403)
+
+
+class FakeManager:
+    """Just enough of the field manager to model one match and one recording at a time."""
+
+    def __init__(self):
+        self.recording = None
+        self.match_id = None
+        self.match_preview = False
+        self.n = 0
+        self.matches = []
+        self.registry = SimpleNamespace(get=lambda cid: {'token': f'tok-{cid}'})
+
+    def get_camera(self, cid):
+        return {'online': True, 'active': True}
+
+    def in_preview(self, cid):
+        return False
+
+    def start_match(self, a, b, preview=False):
+        self.n += 1
+        self.match_id = f'm{self.n}'
+        self.matches.append((a, b))
+
+    def stop_match(self):
+        self.match_id = None
+
+    def start_recording(self, cams, name=''):
+        if self.recording is not None:
+            raise ValueError('A recording is already in progress.')
+        self.n += 1
+        self.recording = SimpleNamespace(id=f'rec{self.n}', paused=False)
+        return {'id': self.recording.id}
+
+    def pause_recording(self):
+        self.recording.paused = True
+
+    def resume_recording(self):
+        self.recording.paused = False
+
+    def stop_recording(self):
+        self.recording = None
+
+
+class DevRecordingTests(TestCase):
+    def setUp(self):
+        from apps.connections.models import Connection
+
+        User = get_user_model()
+        self.dev = User.objects.create_user(email='dev@example.com', password='x', name='Dev', role='developer')
+        self.a = User.objects.create_user(email='a@example.com', password='x', name='Ana')
+        self.b = User.objects.create_user(email='b@example.com', password='x', name='Ben')
+        self.conn = Connection.objects.create(user_a=self.a, user_b=self.b)
+        self.manager = FakeManager()
+        for target in ('apps.games.services.get_field_manager', 'apps.field.views.get_field_manager'):
+            p = mock.patch(target, return_value=self.manager)
+            p.start()
+            self.addCleanup(p.stop)
+        self.dev_client = APIClient()
+        self.dev_client.force_authenticate(self.dev)
+        self.player = APIClient()
+        self.player.force_authenticate(self.a)
+
+    def make_game(self, dev_mode, title='Session'):
+        return Game.objects.create(
+            connection=self.conn, created_by=self.a, scheduled_at='2026-01-01T10:00Z', status='scheduled',
+            title=title, dev_mode=dev_mode,
+            camera_a_id='camA', camera_a_user=self.a, camera_b_id='camB', camera_b_user=self.b,
+        )
+
+    def record(self, game, action):
+        return self.dev_client.post(f'/api/dev/games/{game.id}/record/', {'action': action}, format='json')
+
+    def test_players_can_schedule_a_dev_mode_game(self):
+        resp = self.player.post('/api/games/', {
+            'connection_id': self.conn.id, 'scheduled_at': '2099-01-01T10:00Z', 'dev_mode': True,
+        }, format='json')
+        self.assertEqual(resp.status_code, 201, resp.content)
+        self.assertTrue(resp.json()['dev_mode'])
+        self.assertTrue(Game.objects.get(id=resp.json()['id']).dev_mode)
+
+    def test_dev_mode_game_goes_live_without_recording_then_dev_controls_it(self):
+        game = self.make_game(dev_mode=True)
+        resp = self.player.post(f'/api/games/{game.id}/start/')  # phones auto-start as usual
+        self.assertEqual(resp.json()['status'], 'live')
+        self.assertEqual(resp.json()['recording_state'], 'off')
+        self.assertIsNone(self.manager.recording)
+
+        self.assertEqual(self.record(game, 'pause').status_code, 400)
+        resp = self.record(game, 'start')
+        self.assertEqual(resp.status_code, 200, resp.content)
+        self.assertEqual(resp.json()['recording_state'], 'recording')
+        self.assertEqual(self.record(game, 'start').status_code, 400)
+
+        self.assertEqual(self.record(game, 'pause').json()['recording_state'], 'paused')
+        self.assertTrue(self.manager.recording.paused)
+        self.assertEqual(self.player.get(f'/api/games/{game.id}/').json()['recording_state'], 'paused')
+        self.assertEqual(self.record(game, 'resume').json()['recording_state'], 'recording')
+        self.assertEqual(self.record(game, 'bogus').status_code, 400)
+
+    def test_normal_game_still_records_on_start(self):
+        game = self.make_game(dev_mode=False)
+        self.player.post(f'/api/games/{game.id}/start/')
+        game.refresh_from_db()
+        self.assertTrue(game.recording_id)
+        self.assertEqual(self.record(game, 'pause').json()['recording_state'], 'paused')
+
+    def test_next_game_closes_recording_and_starts_new_game_on_same_cameras(self):
+        game = self.make_game(dev_mode=True, title='Session')
+        self.player.post(f'/api/games/{game.id}/start/')
+        self.record(game, 'start')
+        first_rec = Game.objects.get(pk=game.pk).recording_id
+
+        resp = self.dev_client.post(f'/api/dev/games/{game.id}/next/')
+        self.assertEqual(resp.status_code, 201, resp.content)
+        nxt = resp.json()
+        self.assertEqual((nxt['status'], nxt['title'], nxt['recording_state']), ('live', 'Session #2', 'off'))
+        self.assertTrue(nxt['dev_mode'])
+
+        game.refresh_from_db()
+        self.assertEqual(game.status, 'completed')
+        self.assertEqual(game.recording_id, first_rec)
+        self.assertEqual(game.next_game_id, nxt['id'])
+        self.assertIsNone(self.manager.recording)  # first recording was closed
+        self.assertEqual(self.manager.matches, [('camA', 'camB'), ('camA', 'camB')])
+
+        # Phones on the old page learn where to go; their camera token is unchanged.
+        old_view = self.player.get(f'/api/games/{game.id}/').json()
+        self.assertEqual(old_view['next_game_id'], nxt['id'])
+        new_view = self.player.get(f'/api/games/{nxt["id"]}/').json()
+        self.assertEqual(new_view['my_camera']['id'], old_view['my_camera']['id'])
+
+        # The next game records independently into its own file.
+        self.assertEqual(self.record(Game.objects.get(id=nxt['id']), 'start').json()['recording_state'], 'recording')
+        third = self.dev_client.post(f'/api/dev/games/{nxt["id"]}/next/').json()
+        self.assertEqual(third['title'], 'Session #3')
+
+    def test_cameras_cannot_be_released_after_the_game(self):
+        game = self.make_game(dev_mode=True)
+        self.player.post(f'/api/games/{game.id}/start/')
+        self.dev_client.post(f'/api/dev/games/{game.id}/next/')
+        resp = self.player.delete(f'/api/games/{game.id}/camera/')
+        self.assertEqual(resp.status_code, 400)
+        self.assertEqual(Game.objects.get(pk=game.pk).camera_a_id, 'camA')
+
+    def test_players_cannot_control_recording(self):
+        game = self.make_game(dev_mode=True)
+        self.player.post(f'/api/games/{game.id}/start/')
+        self.assertEqual(self.player.post(f'/api/dev/games/{game.id}/record/', {'action': 'start'}, format='json').status_code, 403)
+        self.assertEqual(self.player.post(f'/api/dev/games/{game.id}/next/').status_code, 403)

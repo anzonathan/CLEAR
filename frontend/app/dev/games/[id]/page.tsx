@@ -2,9 +2,21 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
-import { useParams } from 'next/navigation';
+import { useParams, useRouter } from 'next/navigation';
 import { toast } from 'sonner';
-import { analyzeDevGame, devGameChartUrl, getDevGame, startDevGame, stopCalibrationPreview, stopDevGame, AnalysisReport, DevGame, GameEnd } from '@/lib/api';
+import {
+  analyzeDevGame,
+  devGameChartUrl,
+  getDevGame,
+  nextDevGame,
+  recordDevGame,
+  startDevGame,
+  stopCalibrationPreview,
+  stopDevGame,
+  AnalysisReport,
+  DevGame,
+  GameEnd,
+} from '@/lib/api';
 import { END_LABEL, formatWhen, STATUS_LABEL } from '@/lib/game-format';
 import { CameraFeed, LiveCourt } from '@/components/LiveFeeds';
 import VideoTrimmer from '@/components/VideoTrimmer';
@@ -111,6 +123,7 @@ function ReportCard({ gameId, end, report }: { gameId: string; end: GameEnd; rep
 
 export default function DevGamePage() {
   const { id } = useParams<{ id: string }>();
+  const router = useRouter();
   const [game, setGame] = useState<DevGame | null>(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -189,10 +202,81 @@ export default function DevGamePage() {
             {game.match_id && <> · <code>{game.match_id}</code></>}
           </p>
         </div>
-        <span className={`status-chip status-${game.status}`}>{STATUS_LABEL[game.status]}</span>
+        <div className="dev-game-chips">
+          {game.dev_mode && <span className="status-chip dev-mode-chip">Dev mode</span>}
+          <span className={`status-chip status-${game.status}`}>{STATUS_LABEL[game.status]}</span>
+        </div>
       </div>
+      {game.next_game_id && (
+        <p className="dev-next-link">
+          This game continued as a next game. <Link href={`/dev/games/${game.next_game_id}`}>Open the next game</Link>
+        </p>
+      )}
 
       {(game.status === 'live' || game.status === 'scheduled') && <CalibrationStrip game={game} onChange={setGame} />}
+
+      {game.status === 'live' && (
+        <section className="panel rec-bar" aria-label="Recording">
+          <div className="rec-bar-state">
+            <span className={`status-chip rec-chip rec-${game.recording_state}`} aria-live="polite">
+              {game.recording_state === 'recording' ? 'Recording' : game.recording_state === 'paused' ? 'Paused' : 'Not recording'}
+            </span>
+            <span className="muted">
+              {game.dev_mode
+                ? 'Dev mode: you control the recording. Pausing skips that stretch; resuming continues the same file.'
+                : 'Recording started with the game. Pausing skips that stretch; resuming continues the same file.'}
+            </span>
+          </div>
+          <div className="rec-bar-actions">
+            {game.recording_state === 'off' && (
+              <button type="button" className="btn btn-primary" disabled={busy} onClick={() => run(() => recordDevGame(game.id, 'start'), 'Recording started')}>
+                Start recording
+              </button>
+            )}
+            {game.recording_state === 'recording' && (
+              <button type="button" className="btn btn-primary" disabled={busy} onClick={() => run(() => recordDevGame(game.id, 'pause'), 'Recording paused')}>
+                Pause recording
+              </button>
+            )}
+            {game.recording_state === 'paused' && (
+              <button type="button" className="btn btn-primary" disabled={busy} onClick={() => run(() => recordDevGame(game.id, 'resume'), 'Recording resumed')}>
+                Resume recording
+              </button>
+            )}
+            <button
+              type="button"
+              className="btn btn-secondary"
+              disabled={busy}
+              title="End this game (its recording is saved) and start a new one for the same players and cameras"
+              onClick={async () => {
+                if (!window.confirm(`End this game and start the next one for ${pair}? Phones keep their cameras on.`)) return;
+                setBusy(true);
+                try {
+                  const next = await nextDevGame(game.id);
+                  toast.success(next.status === 'live' ? 'Next game started' : 'Next game created', {
+                    description: next.dev_mode ? 'Not recording yet: start it when ready.' : undefined,
+                  });
+                  router.replace(`/dev/games/${next.id}`);
+                } catch (err) {
+                  toast.error(err instanceof Error ? err.message : 'Could not start the next game');
+                } finally {
+                  setBusy(false);
+                }
+              }}
+            >
+              Next game
+            </button>
+            <button
+              type="button"
+              className="btn btn-secondary"
+              disabled={busy}
+              onClick={() => window.confirm('End this game for both players?') && run(() => stopDevGame(game.id), 'Game ended')}
+            >
+              End game
+            </button>
+          </div>
+        </section>
+      )}
 
       {game.status === 'live' && (
         <div className="dev-live">
@@ -208,14 +292,6 @@ export default function DevGamePage() {
               <h3>Fused court</h3>
             </div>
             <LiveCourt cameraNames={camNames} />
-            <button
-              type="button"
-              className="btn btn-secondary"
-              disabled={busy}
-              onClick={() => window.confirm('End this game for both players?') && run(() => stopDevGame(game.id), 'Game ended')}
-            >
-              End game
-            </button>
           </aside>
         </div>
       )}

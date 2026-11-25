@@ -89,8 +89,10 @@ def release_end(game, user, save=True):
     slot = game.slot_for(user)
     if slot is None:
         return game
-    if game.status == 'live':
-        raise GameError('Stop the game before changing cameras.')
+    if game.status != 'scheduled':
+        # A finished game can share its cameras with the next game (dev "Next game"),
+        # so releasing would delete a camera that is still in use.
+        raise GameError('Cameras can only be changed before the game starts.')
     manager = get_field_manager()
     cam_id = game.camera_a_id if slot == 'end_a' else game.camera_b_id
     if manager and cam_id:
@@ -144,12 +146,13 @@ def _start_locked(game):
     except ValueError as exc:
         raise GameError(str(exc))
     game.match_id = manager.match_id or ''
-    try:
-        rec = manager.start_recording([game.camera_a_id, game.camera_b_id], name=str(game))
-        game.recording_id = str(rec.get('id') or '')
-    except ValueError as exc:
-        # Live analysis still runs; only the recording for later review is lost.
-        log.warning('Game %s: recording not started: %s', game.id, exc)
+    if not game.dev_mode:  # dev-mode games wait for a developer to start the recording
+        try:
+            rec = manager.start_recording([game.camera_a_id, game.camera_b_id], name=str(game))
+            game.recording_id = str(rec.get('id') or '')
+        except ValueError as exc:
+            # Live analysis still runs; only the recording for later review is lost.
+            log.warning('Game %s: recording not started: %s', game.id, exc)
     game.status = 'live'
     game.started_at = timezone.now()
     game.save()
@@ -183,6 +186,82 @@ def dev_start_game(game):
     if blockers:
         raise GameError(' '.join(blockers), status=409)
     return start_game(game)
+
+
+def recording_state(game):
+    """'off' | 'recording' | 'paused' while live; 'saved' / 'none' once the game is over."""
+    if game.status != 'live':
+        return 'saved' if game.recording_id else 'none'
+    manager = get_field_manager()
+    rec = getattr(manager, 'recording', None) if manager else None
+    if not game.recording_id or rec is None or rec.id != game.recording_id:
+        return 'off'
+    return 'paused' if getattr(rec, 'paused', False) else 'recording'
+
+
+def dev_record(game, action):
+    """Developer recording control for a live game: start | pause | resume (one file per game)."""
+    if game.status != 'live':
+        raise GameError('Recording can only be controlled while the game is live.')
+    manager = require_manager()
+    state = recording_state(game)
+    try:
+        if action == 'start':
+            if state != 'off':
+                raise GameError('This game is already recording.' if state == 'recording' else 'Recording is paused: resume it.')
+            if game.recording_id:
+                raise GameError('This game already has a recording that was closed. Start a next game to record again.')
+            if manager.recording is not None:
+                raise GameError('Another recording is running on the server.', status=409)
+            rec = manager.start_recording([game.camera_a_id, game.camera_b_id], name=str(game))
+            game.recording_id = str(rec.get('id') or '')
+            game.save(update_fields=['recording_id', 'updated_at'])
+        elif action == 'pause':
+            if state != 'recording':
+                raise GameError('Nothing is recording right now.')
+            manager.pause_recording()
+        elif action == 'resume':
+            if state != 'paused':
+                raise GameError('The recording is not paused.')
+            manager.resume_recording()
+        else:
+            raise GameError('action must be start, pause or resume.')
+    except ValueError as exc:  # field manager refused (e.g. camera not active)
+        raise GameError(str(exc), status=409)
+    return game
+
+
+def _next_title(title):
+    base, n = title or '', 2
+    m = re.match(r'^(.*?)\s*#(\d+)$', base)
+    if m:
+        base, n = m.group(1), int(m.group(2)) + 1
+    return f'{base or "Game"} #{n}'[:120]
+
+
+def dev_next_game(game):
+    """End this live game (its recording is closed and kept) and start a new game for the same
+    players on the same cameras, so phones keep streaming. Dev-mode games start unrecorded."""
+    if game.status != 'live':
+        raise GameError('Only a live game can roll into a next game.')
+    if not (game.camera_a_id and game.camera_b_id):
+        raise GameError('Both ends need a camera.')
+    nxt = Game.objects.create(
+        connection=game.connection, created_by=game.created_by, scheduled_at=timezone.now(),
+        court_mode=game.court_mode, title=_next_title(game.title), dev_mode=game.dev_mode,
+        camera_a_id=game.camera_a_id, camera_a_user=game.camera_a_user,
+        camera_b_id=game.camera_b_id, camera_b_user=game.camera_b_user,
+    )
+    # Link before ending: phones stop polling once they see "completed", so that same
+    # response must already say where to go next.
+    game.next_game = nxt
+    stop_game(game)  # saves status + next_game together, closes the recording
+    try:
+        return start_game(nxt)
+    except GameError:
+        # Leave the new game scheduled: phones (or Start game in dev tools) can start it.
+        log.warning('Next game %s created but not started', nxt.id, exc_info=True)
+        return Game.objects.get(pk=nxt.pk)
 
 
 def start_preview(game):

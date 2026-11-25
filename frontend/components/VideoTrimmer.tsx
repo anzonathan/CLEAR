@@ -59,12 +59,109 @@ function markersFrom(report: AnalysisReport | undefined, out: Map<string, Marker
   }
 }
 
+/** Polls the backend until a recording's browser-playable copy is ready. */
+function usePreparedVideo(gameId: string, end: GameEnd, kind: VideoKind, enabled: boolean) {
+  const [prep, setPrep] = useState<VideoPrepare | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    setPrep(null);
+    setError(null);
+    if (!enabled) return;
+    let cancelled = false;
+    let timer: number | undefined;
+    const poll = async () => {
+      try {
+        const res = await prepareDevGameVideo(gameId, end, kind);
+        if (cancelled) return;
+        if (res.state === 'error') {
+          setError(res.error ?? 'Could not prepare the video.');
+          return;
+        }
+        setPrep(res);
+        if (res.state === 'converting') timer = window.setTimeout(poll, 2000);
+      } catch (err) {
+        if (!cancelled) setError(err instanceof Error ? err.message : 'Could not prepare the video.');
+      }
+    };
+    poll();
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [gameId, end, kind, enabled]);
+  return { prep, error };
+}
+
+function VideoPlaceholder({ prep, error, end }: { prep: VideoPrepare | null; error: string | null; end: GameEnd }) {
+  return (
+    <div className="trimmer-placeholder">
+      {error ? (
+        <p className="form-error">{error}</p>
+      ) : (
+        <>
+          <div className="loader">
+            <i></i>
+            <i></i>
+            <i></i>
+          </div>
+          <p className="muted">
+            {prep?.state === 'converting'
+              ? `Preparing ${END_LABEL[end]} for the browser (first time only, ${fmtTime(prep.duration_s)} of video)…`
+              : 'Loading recording…'}
+          </p>
+        </>
+      )}
+    </div>
+  );
+}
+
+function readStored(key: string): string | null {
+  try {
+    return window.localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+
+function writeStored(key: string, value: string) {
+  try {
+    window.localStorage.setItem(key, value);
+  } catch {
+    /* private mode / blocked storage: setting just isn't remembered */
+  }
+}
+
 export default function VideoTrimmer({ game, onGameChange }: { game: DevGame; onGameChange: (g: DevGame) => void }) {
   const ends = ENDS.filter((e) => game.videos?.[e]?.raw || game.videos?.[e]?.annotated);
   const [end, setEnd] = useState<GameEnd>(ends[0] ?? 'end_a');
   const [kind, setKind] = useState<VideoKind>('raw');
-  const [prep, setPrep] = useState<VideoPrepare | null>(null);
-  const [prepError, setPrepError] = useState<string | null>(null);
+
+  // Split view: the other end plays alongside, following this end's timeline.
+  const canSplit = ends.length > 1;
+  const splitKey = `clear-split-${game.id}`;
+  const offsetKey = `clear-split-offset-${game.id}`;
+  const [split, setSplitState] = useState(false);
+  /** Seconds End B is ahead of End A at the same real moment (End B time = End A time + offset). */
+  const [offset, setOffsetState] = useState(0);
+  useEffect(() => {
+    setSplitState(readStored(splitKey) === '1');
+    const o = Number(readStored(offsetKey));
+    setOffsetState(Number.isFinite(o) ? o : 0);
+  }, [splitKey, offsetKey]);
+  const setSplit = (on: boolean) => {
+    setSplitState(on);
+    writeStored(splitKey, on ? '1' : '0');
+  };
+  const setOffset = (o: number) => {
+    const v = Math.round(o * 1000) / 1000;
+    setOffsetState(v);
+    writeStored(offsetKey, String(v));
+  };
+  const splitOn = split && canSplit;
+  const sideEnd: GameEnd = end === 'end_a' ? 'end_b' : 'end_a';
+  const sideOffset = end === 'end_a' ? offset : -offset; // added to this end's time to get the other end's
+  const sideRef = useRef<HTMLVideoElement>(null);
+  const resumeAt = useRef<number | null>(null);
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const trackRef = useRef<HTMLDivElement>(null);
@@ -84,40 +181,35 @@ export default function VideoTrimmer({ game, onGameChange }: { game: DevGame; on
 
   const available = game.videos?.[end] ?? { raw: false, annotated: false };
   const effectiveKind: VideoKind = available[kind] ? kind : available.raw ? 'raw' : 'annotated';
+  const { prep, error: prepError } = usePreparedVideo(game.id, end, effectiveKind, true);
+  const sideAvail = game.videos?.[sideEnd] ?? { raw: false, annotated: false };
+  const sideKind: VideoKind = sideAvail[effectiveKind] ? effectiveKind : sideAvail.raw ? 'raw' : 'annotated';
+  const side = usePreparedVideo(game.id, sideEnd, sideKind, splitOn);
   const fps = prep?.fps || 30;
   const totalFrames = prep?.frames || Math.round(duration * fps);
   const frame = Math.min(Math.max(0, totalFrames - 1), Math.floor(time * fps + 1e-4));
   const len = duration || prep?.duration_s || 0;
 
-  // ------------------------------------------------------------- conversion
   useEffect(() => {
-    let cancelled = false;
-    let timer: number | undefined;
-    setPrep(null);
-    setPrepError(null);
     setTime(0);
     setDuration(0);
     setPlaying(false);
-    const poll = async () => {
-      try {
-        const res = await prepareDevGameVideo(game.id, end, effectiveKind);
-        if (cancelled) return;
-        if (res.state === 'error') {
-          setPrepError(res.error ?? 'Could not prepare the video.');
-          return;
-        }
-        setPrep(res);
-        if (res.state === 'converting') timer = window.setTimeout(poll, 2000);
-      } catch (err) {
-        if (!cancelled) setPrepError(err instanceof Error ? err.message : 'Could not prepare the video.');
-      }
-    };
-    poll();
-    return () => {
-      cancelled = true;
-      window.clearTimeout(timer);
-    };
   }, [game.id, end, effectiveKind]);
+
+  // ------------------------------------------------------------- split sync
+  /** Move the side video to the moment matching this end's time ``t``. */
+  const syncSide = useCallback(
+    (t: number) => {
+      const s = sideRef.current;
+      if (!s || !Number.isFinite(s.duration)) return;
+      s.currentTime = Math.min(Math.max(0, t + sideOffset), Math.max(0, s.duration - 0.01));
+    },
+    [sideOffset]
+  );
+
+  useEffect(() => {
+    if (videoRef.current) syncSide(videoRef.current.currentTime);
+  }, [syncSide]);
 
   // ------------------------------------------------------------- playback
   useEffect(() => {
@@ -132,16 +224,26 @@ export default function VideoTrimmer({ game, onGameChange }: { game: DevGame; on
           stopAtRef.current = null;
         }
         setTime(v.currentTime);
+        // Keep the side video locked to this one (phones' clocks drift a little).
+        const s = sideRef.current;
+        if (s && Number.isFinite(s.duration)) {
+          const target = v.currentTime + sideOffset;
+          const inRange = target >= 0 && target < s.duration;
+          if (!inRange && !s.paused) s.pause();
+          else if (inRange && s.paused && !v.paused) s.play().catch(() => undefined);
+          if (inRange && Math.abs(s.currentTime - target) > 0.12) s.currentTime = target;
+        }
       }
       raf = requestAnimationFrame(tick);
     };
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
-  }, [playing, fps]);
+  }, [playing, fps, sideOffset]);
 
   useEffect(() => {
     if (videoRef.current) videoRef.current.playbackRate = rate;
-  }, [rate, prep?.state]);
+    if (sideRef.current) sideRef.current.playbackRate = rate;
+  }, [rate, prep?.state, side.prep?.state]);
 
   const seek = useCallback(
     (t: number) => {
@@ -150,9 +252,17 @@ export default function VideoTrimmer({ game, onGameChange }: { game: DevGame; on
       const clamped = Math.min(Math.max(0, t), Math.max(0, (v.duration || len) - 0.5 / fps));
       v.currentTime = clamped;
       setTime(clamped);
+      syncSide(clamped);
     },
-    [fps, len]
+    [fps, len, syncSide]
   );
+
+  /** Make the other end the one driving the timeline, staying at the same moment. */
+  const swapEnds = () => {
+    videoRef.current?.pause();
+    resumeAt.current = Math.max(0, time + sideOffset);
+    setEnd(sideEnd);
+  };
 
   const seekFrame = useCallback(
     (f: number) => {
@@ -353,10 +463,22 @@ export default function VideoTrimmer({ game, onGameChange }: { game: DevGame; on
           <p className="muted">Scrub the recording, mark segments with I and O, then analyse or export them.</p>
         </div>
         <div className="trimmer-switches">
-          {ends.length > 1 && (
-            <div className="segmented" role="group" aria-label="Camera end">
+          {canSplit && (
+            <button
+              type="button"
+              className={`btn ${splitOn ? 'btn-primary' : 'btn-secondary'} trimmer-split-toggle`}
+              aria-pressed={splitOn}
+              onClick={() => setSplit(!splitOn)}
+              title="Show both ends side by side, in sync"
+            >
+              <svg className="icon" width="16" height="16" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2" /><line x1="12" y1="5" x2="12" y2="19" /></svg>
+              Split view
+            </button>
+          )}
+          {canSplit && (
+            <div className="segmented" role="group" aria-label={splitOn ? 'End driving the timeline' : 'Camera end'}>
               {ends.map((e) => (
-                <button key={e} type="button" className={e === end ? 'active' : ''} onClick={() => setEnd(e)}>
+                <button key={e} type="button" className={e === end ? 'active' : ''} onClick={() => e !== end && swapEnds()}>
                   {END_LABEL[e]}
                 </button>
               ))}
@@ -378,45 +500,103 @@ export default function VideoTrimmer({ game, onGameChange }: { game: DevGame; on
         </div>
       </div>
 
-      <div className="trimmer-stage">
-        {ready ? (
-          <video
-            key={`${end}-${effectiveKind}`}
-            ref={videoRef}
-            src={devGameVideoUrl(game.id, end, effectiveKind)}
-            preload="auto"
-            playsInline
-            muted
-            onClick={togglePlay}
-            onLoadedMetadata={(e) => setDuration(e.currentTarget.duration || 0)}
-            onPlay={() => setPlaying(true)}
-            onPause={(e) => {
-              setPlaying(false);
-              setTime(e.currentTarget.currentTime);
-            }}
-            onSeeked={(e) => setTime(e.currentTarget.currentTime)}
-          />
-        ) : (
-          <div className="trimmer-placeholder">
-            {prepError ? (
-              <p className="form-error">{prepError}</p>
+      <div className={`trimmer-panes ${splitOn ? 'split' : ''}`}>
+        <figure className="trimmer-pane">
+          {splitOn && (
+            <figcaption>
+              <b>{END_LABEL[end]}</b>
+              <span className="status-chip analysis-done">Timeline</span>
+            </figcaption>
+          )}
+          <div className="trimmer-stage">
+            {ready ? (
+              <video
+                key={`${end}-${effectiveKind}`}
+                ref={videoRef}
+                src={devGameVideoUrl(game.id, end, effectiveKind)}
+                preload="auto"
+                playsInline
+                muted
+                onClick={togglePlay}
+                onLoadedMetadata={(e) => {
+                  setDuration(e.currentTarget.duration || 0);
+                  if (resumeAt.current != null) {
+                    seek(resumeAt.current);
+                    resumeAt.current = null;
+                  }
+                }}
+                onPlay={() => setPlaying(true)}
+                onPause={(e) => {
+                  setPlaying(false);
+                  setTime(e.currentTarget.currentTime);
+                  sideRef.current?.pause();
+                  syncSide(e.currentTarget.currentTime);
+                }}
+                onSeeked={(e) => setTime(e.currentTarget.currentTime)}
+              />
             ) : (
-              <>
-                <div className="loader">
-                  <i></i>
-                  <i></i>
-                  <i></i>
-                </div>
-                <p className="muted">
-                  {prep?.state === 'converting'
-                    ? `Preparing ${END_LABEL[end]} for the browser (first time only, ${fmtTime(prep.duration_s)} of video)…`
-                    : 'Loading recording…'}
-                </p>
-              </>
+              <VideoPlaceholder prep={prep} error={prepError} end={end} />
             )}
           </div>
+        </figure>
+        {splitOn && (
+          <figure className="trimmer-pane">
+            <figcaption>
+              <b>{END_LABEL[sideEnd]}</b>
+              <button type="button" className="btn btn-ghost" onClick={swapEnds} title={`Drive the timeline from ${END_LABEL[sideEnd]}`}>
+                Use for timeline
+              </button>
+            </figcaption>
+            <div className="trimmer-stage">
+              {side.prep?.state === 'ready' ? (
+                <video
+                  key={`side-${sideEnd}-${sideKind}`}
+                  ref={sideRef}
+                  src={devGameVideoUrl(game.id, sideEnd, sideKind)}
+                  preload="auto"
+                  playsInline
+                  muted
+                  onClick={togglePlay}
+                  onLoadedMetadata={(e) => {
+                    e.currentTarget.playbackRate = rate;
+                    syncSide(videoRef.current?.currentTime ?? time);
+                  }}
+                />
+              ) : (
+                <VideoPlaceholder prep={side.prep} error={side.error} end={sideEnd} />
+              )}
+            </div>
+          </figure>
         )}
       </div>
+      {splitOn && (
+        <div className="trimmer-sync" role="group" aria-label="End B sync offset">
+          <span className="muted">
+            Line the two phones up: step End B until both show the same moment (e.g. a racket contact).
+          </span>
+          <div className="trimmer-sync-controls">
+            <button type="button" className="btn btn-secondary" onClick={() => setOffset(offset - 0.1)} title="End B earlier by 0.1 s">
+              −0.1 s
+            </button>
+            <button type="button" className="btn btn-secondary" onClick={() => setOffset(offset - 1 / fps)} title="End B earlier by one frame">
+              −1f
+            </button>
+            <output className="trimmer-sync-value" aria-live="polite">
+              End B {offset >= 0 ? '+' : '−'}
+              {Math.abs(offset).toFixed(3)} s
+            </output>
+            <button type="button" className="btn btn-secondary" onClick={() => setOffset(offset + 1 / fps)} title="End B later by one frame">
+              +1f
+            </button>
+            <button type="button" className="btn btn-secondary" onClick={() => setOffset(offset + 0.1)} title="End B later by 0.1 s">
+              +0.1 s
+            </button>
+            <button type="button" className="btn btn-ghost" onClick={() => setOffset(0)} disabled={offset === 0}>
+              Reset
+            </button>
+          </div>
+        </div>
+      )}
 
       <div className="trimmer-controls">
         <button type="button" className="btn btn-primary trimmer-play" onClick={togglePlay} disabled={!ready} aria-label={playing ? 'Pause' : 'Play'}>

@@ -215,6 +215,16 @@ class DevGameViewSet(viewsets.ReadOnlyModelViewSet):
         return Response(self.get_serializer(game).data)
 
     @action(detail=True, methods=['post'])
+    def start(self, request, pk=None):
+        """Let a developer start a scheduled game once both players' phones are online."""
+        game = self.get_object()
+        try:
+            game = services.dev_start_game(game)
+        except services.GameError as exc:
+            return _error(exc)
+        return Response(self.get_serializer(game).data)
+
+    @action(detail=True, methods=['post'])
     def stop(self, request, pk=None):
         """Let a developer end a live game, e.g. when players leave it running."""
         game = self.get_object()

@@ -1258,7 +1258,8 @@ body { background: var(--paper); }
 .dev-game-top code { font-size: 11px; background: var(--surface); padding: 2px 6px; border-radius: 5px; }
 
 .dev-live { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 18px; align-items: start; }
-.dev-feeds { display: flex; flex-direction: column; gap: 14px; }
+/* Live feeds: both ends side by side (one feed spans the row); stacked only on phones. */
+.dev-feeds { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); gap: 14px; align-items: start; }
 .feed { margin: 0; display: flex; flex-direction: column; gap: 8px; }
 .feed-frame {
   position: relative;
@@ -1302,7 +1303,17 @@ body { background: var(--paper); }
 .stat-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px 12px; }
 .report-chart { width: 100%; border-radius: 10px; background: var(--paper); }
 
-@media (max-width: 1100px) {
+@media (max-width: 640px) {
+  .dev-feeds { grid-auto-flow: row; }
+}
+
+@media (min-width: 641px) and (max-width: 1280px) {
+  /* Court panel sits under the split feeds: court left, readout beside it. */
+  .dev-court-panel .live-court { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); align-items: start; gap: 18px; }
+  .dev-court-panel .court-diagram { max-height: 46vh; }
+}
+
+@media (max-width: 1280px) {
   .dev-live { grid-template-columns: 1fr; }
   .dev-court-panel { position: static; }
   .court-diagram { max-height: 60vh; }

@@ -871,11 +871,27 @@ class FieldManager:
         meta = session.finalize()
         return self.get_recording(session.id) or meta
 
+    def pause_recording(self) -> Dict[str, object]:
+        """Stop writing frames but keep the recording's files open, to resume into them."""
+        with self._record_lock:
+            if self.recording is None:
+                raise ValueError("No recording in progress.")
+            self.recording.set_paused(True)
+            return self.recording_status()
+
+    def resume_recording(self) -> Dict[str, object]:
+        with self._record_lock:
+            if self.recording is None:
+                raise ValueError("No recording in progress.")
+            self.recording.set_paused(False)
+            return self.recording_status()
+
     def recording_status(self) -> Dict[str, object]:
         if self.recording is None:
             return {"recording": False}
         return {
             "recording": True,
+            "paused": bool(self.recording.paused),
             "id": self.recording.id,
             "name": self.recording.name,
             "cameras": list(self.recording.recorders.keys()),

@@ -20,14 +20,18 @@ class GameSerializer(serializers.ModelSerializer):
     ends = serializers.SerializerMethodField()
     my_end = serializers.SerializerMethodField()
     my_camera = serializers.SerializerMethodField()
+    recording_state = serializers.SerializerMethodField()
 
     class Meta:
         model = Game
         fields = [
             'id', 'title', 'connection', 'scheduled_at', 'court_mode', 'status',
-            'partner', 'ends', 'my_end', 'my_camera',
+            'partner', 'ends', 'my_end', 'my_camera', 'dev_mode', 'next_game_id', 'recording_state',
             'started_at', 'ended_at', 'analysis_status', 'analysis', 'created_at',
         ]
+
+    def get_recording_state(self, obj):
+        return services.recording_state(obj)
 
     def _me(self):
         return self.context['request'].user
@@ -60,12 +64,14 @@ class DevGameSerializer(serializers.ModelSerializer):
     recorded = serializers.SerializerMethodField()
     videos = serializers.SerializerMethodField()
     start_blockers = serializers.SerializerMethodField()
+    recording_state = serializers.SerializerMethodField()
 
     class Meta:
         model = Game
         fields = [
             'id', 'title', 'scheduled_at', 'court_mode', 'status', 'players', 'ends',
-            'match_id', 'recording_id', 'recorded', 'videos', 'segments', 'start_blockers', 'started_at', 'ended_at',
+            'match_id', 'recording_id', 'recorded', 'videos', 'segments', 'start_blockers',
+            'dev_mode', 'next_game_id', 'recording_state', 'started_at', 'ended_at',
             'analysis_status', 'analysis', 'created_at',
         ]
 
@@ -80,6 +86,9 @@ class DevGameSerializer(serializers.ModelSerializer):
 
     def get_recorded(self, obj):
         return len(services.recording_files(obj)) if obj.status == 'completed' else 0
+
+    def get_recording_state(self, obj):
+        return services.recording_state(obj)
 
     def get_start_blockers(self, obj):
         """Scheduled games only: reasons a developer can't start it yet ([] = ready)."""
@@ -108,6 +117,8 @@ class GameCreateSerializer(serializers.Serializer):
     scheduled_at = serializers.DateTimeField()
     court_mode = serializers.ChoiceField(choices=['singles', 'doubles'], default='singles')
     title = serializers.CharField(max_length=120, required=False, allow_blank=True)
+    # Data-collection game: no automatic recording; a developer controls it.
+    dev_mode = serializers.BooleanField(required=False, default=False)
 
     def validate_scheduled_at(self, value):
         if value < timezone.now() - timezone.timedelta(minutes=5):

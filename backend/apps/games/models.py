@@ -59,6 +59,12 @@ class Game(models.Model):
     # Developer-marked time ranges of the recording, analysed/exported individually:
     # [{id, end: 'end_a'|'end_b', label, start_s, end_s}]
     segments = models.JSONField(default=list, blank=True)
+    # Data-collection games: going live does not record; a developer starts, pauses and
+    # resumes the recording, and can roll straight into a next game on the same cameras.
+    dev_mode = models.BooleanField(default=False)
+    next_game = models.ForeignKey(
+        'self', on_delete=models.SET_NULL, null=True, blank=True, related_name='+'
+    )
 
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

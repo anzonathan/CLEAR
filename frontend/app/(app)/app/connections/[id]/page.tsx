@@ -23,7 +23,18 @@ export default function ConnectionPage() {
   const [when, setWhen] = useState(defaultStart);
   const [courtMode, setCourtMode] = useState<'singles' | 'doubles'>('singles');
   const [title, setTitle] = useState('');
+  const [devMode, setDevMode] = useState(false);
   const [saving, setSaving] = useState(false);
+
+  const devModeToggle = (
+    <label className="dev-mode-toggle">
+      <input type="checkbox" checked={devMode} onChange={(e) => setDevMode(e.target.checked)} />
+      <span>
+        <b>Dev mode</b>
+        <small>For data collection: a developer starts, pauses and resumes the recording.</small>
+      </span>
+    </label>
+  );
 
   useEffect(() => {
     Promise.all([getConnection(id), getGames({ connection: id })])
@@ -38,7 +49,12 @@ export default function ConnectionPage() {
   const handleStartNow = async () => {
     setSaving(true);
     try {
-      const game = await scheduleGame({ connection_id: id, scheduled_at: new Date().toISOString(), court_mode: courtMode });
+      const game = await scheduleGame({
+        connection_id: id,
+        scheduled_at: new Date().toISOString(),
+        court_mode: courtMode,
+        dev_mode: devMode,
+      });
       toast.success('Session created', { description: `Pick your end and start your camera. ${connection?.other_name ?? 'Your partner'} does the same.` });
       router.push(`/app/games/${game.id}`);
     } catch (err) {
@@ -57,6 +73,7 @@ export default function ConnectionPage() {
         scheduled_at: new Date(when).toISOString(),
         court_mode: courtMode,
         title: title.trim() || undefined,
+        dev_mode: devMode,
       });
       toast.success('Game scheduled', { description: 'Next, pick which end your phone films.' });
       router.push(`/app/games/${game.id}`);
@@ -105,8 +122,14 @@ export default function ConnectionPage() {
       <div className="panel start-now">
         <div>
           <h3>Play now</h3>
-          <p className="muted">Start a session with {name} right away. Recording begins when both phones are steady.</p>
+          <p className="muted">
+            Start a session with {name} right away.{' '}
+            {devMode
+              ? 'The game starts when both phones are steady; a developer controls the recording.'
+              : 'Recording begins when both phones are steady.'}
+          </p>
         </div>
+        {devModeToggle}
         <button type="button" className="btn btn-primary" disabled={saving} onClick={handleStartNow}>
           Start session now
         </button>
@@ -150,6 +173,8 @@ export default function ConnectionPage() {
               <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Saturday practice" maxLength={120} />
             </div>
           </label>
+
+          {devModeToggle}
 
           <button type="submit" className="btn btn-primary" disabled={saving}>
             {saving ? 'Scheduling…' : 'Schedule game'}

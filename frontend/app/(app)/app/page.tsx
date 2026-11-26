@@ -97,10 +97,10 @@ export default function HomePage() {
       {games.length > 0 && (
         <div className="panel home-games">
           <div className="section-heading">
-            <h3>Upcoming games</h3>
+            <h3>{games.some((g) => g.awaiting_me) ? 'Invites and upcoming games' : 'Upcoming games'}</h3>
             <Link href="/app/games">View all</Link>
           </div>
-          {games.slice(0, 3).map((g) => (
+          {[...games.filter((g) => g.awaiting_me), ...games.filter((g) => !g.awaiting_me)].slice(0, 3).map((g) => (
             <GameRow
               key={g.id}
               href={`/app/games/${g.id}`}
@@ -108,6 +108,7 @@ export default function HomePage() {
               subtitle={g.court_mode}
               when={g.scheduled_at}
               status={g.status}
+              awaitingMe={g.awaiting_me}
             />
           ))}
         </div>

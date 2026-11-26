@@ -15,6 +15,8 @@ from .models import Game
 log = logging.getLogger(__name__)
 
 END_LABEL = {'end_a': 'End A', 'end_b': 'End B'}
+# Statuses before a game is played: an open invite, or an accepted one.
+OPEN_STATUSES = ('pending', 'scheduled')
 
 
 class GameError(Exception):
@@ -63,7 +65,7 @@ def claim_end(game, user, end):
     """Give `user` the camera slot for `end`, creating the field camera. Releases their other slot."""
     if end not in END_LABEL:
         raise GameError('Pick End A or End B.')
-    if game.status != 'scheduled':
+    if game.status not in OPEN_STATUSES:
         raise GameError('Cameras can only be set before the game starts.')
     holder = game.camera_a_user_id if end == 'end_a' else game.camera_b_user_id
     if holder and holder != user.id:
@@ -110,6 +112,45 @@ def apply_detector_settings():
     os.environ['CLEAR_YOLO_IMGSZ'] = str(StreamSettings.load().yolo_imgsz)
 
 
+def accept_invite(game, user):
+    """The invited player agrees to the game, so it can start."""
+    if game.status != 'pending':
+        raise GameError('This invite is no longer open.', status=409)
+    if not game.awaits(user):
+        raise GameError('Your partner has to accept this invite.', status=403)
+    game.status = 'scheduled'
+    game.save()
+    return game
+
+
+def decline_invite(game, user):
+    """The invited player turns the game down. Frees any camera the proposer set."""
+    if game.status != 'pending':
+        raise GameError('This invite is no longer open.', status=409)
+    if not game.awaits(user):
+        raise GameError('You sent this invite. Cancel it instead.', status=403)
+    _release_all(game)
+    game.status = 'declined'
+    game.save()
+    return game
+
+
+def _release_all(game):
+    for user in (game.camera_a_user, game.camera_b_user):
+        if user is not None:
+            release_end(game, user, save=False)
+
+
+def cancel_game(game):
+    """Cancel an invite or an accepted game that has not started. Frees both cameras."""
+    if game.status not in OPEN_STATUSES:
+        raise GameError('Only games that have not started can be cancelled.')
+    _release_all(game)
+    game.status = 'cancelled'
+    game.save()
+    return game
+
+
 def start_game(game):
     """Start live two-camera analysis and record both feeds.
 
@@ -125,6 +166,8 @@ def start_game(game):
 
 
 def _start_locked(game):
+    if game.status == 'pending':
+        raise GameError('Waiting for your partner to accept the invite.', status=409)
     if game.status != 'scheduled':
         raise GameError('This game has already been played or cancelled.')
     if not (game.camera_a_id and game.camera_b_id):
@@ -157,7 +200,7 @@ def _start_locked(game):
 
 def start_preview(game):
     """Run both cameras without recording so a developer can calibrate before the game."""
-    if game.status != 'scheduled':
+    if game.status not in OPEN_STATUSES:
         raise GameError('Preview is for games that have not started. Calibrate a live game directly.')
     if not (game.camera_a_id and game.camera_b_id):
         raise GameError('Both players need to pick an end first.')

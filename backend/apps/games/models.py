@@ -13,7 +13,11 @@ def generate_id():
 class Game(models.Model):
     """A game a pair schedules. Each player films one end of the court with their phone."""
 
+    # A new game is an invite ('pending') until the partner accepts it ('scheduled')
+    # or declines it ('declined'). Rescheduling sends it back to 'pending'.
     STATUS_CHOICES = [
+        ('pending', 'Pending'),
+        ('declined', 'Declined'),
         ('scheduled', 'Scheduled'),
         ('live', 'Live'),
         ('completed', 'Completed'),
@@ -34,10 +38,15 @@ class Game(models.Model):
     created_by = models.ForeignKey(
         'users.User', on_delete=models.CASCADE, related_name='created_games'
     )
+    # Who sent the current invite (the creator, or whoever last rescheduled). The other
+    # player is the one who must accept.
+    proposed_by = models.ForeignKey(
+        'users.User', on_delete=models.SET_NULL, null=True, blank=True, related_name='+'
+    )
     title = models.CharField(max_length=120, blank=True)
     scheduled_at = models.DateTimeField()
     court_mode = models.CharField(max_length=10, choices=COURT_MODE_CHOICES, default='singles')
-    status = models.CharField(max_length=12, choices=STATUS_CHOICES, default='scheduled')
+    status = models.CharField(max_length=12, choices=STATUS_CHOICES, default='pending')
 
     # Camera slots. Ids point at the field camera registry (src.capture), not a DB table.
     camera_a_id = models.CharField(max_length=32, blank=True)
@@ -66,6 +75,10 @@ class Game(models.Model):
 
     def __str__(self):
         return self.title or f'Game {self.id}'
+
+    def awaits(self, user):
+        """True when this game is an invite `user` has to accept or decline."""
+        return self.status == 'pending' and self.proposed_by_id != user.id
 
     def slot_for(self, user):
         """Return 'end_a', 'end_b' or None for the end this user films."""

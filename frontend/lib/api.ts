@@ -251,7 +251,8 @@ export async function getFieldHealth() {
 
 // Games: a pair schedules a game; each player films one end with their phone.
 export type GameEnd = 'end_a' | 'end_b';
-export type GameStatus = 'scheduled' | 'live' | 'completed' | 'cancelled';
+/** 'pending' is an invite the partner has not accepted yet; 'declined' is one they turned down. */
+export type GameStatus = 'pending' | 'declined' | 'scheduled' | 'live' | 'completed' | 'cancelled';
 export type AnalysisStatus = 'none' | 'running' | 'done' | 'failed';
 
 export interface UserBrief {
@@ -314,6 +315,10 @@ export interface Game {
   scheduled_at: string;
   court_mode: 'singles' | 'doubles';
   status: GameStatus;
+  /** Who sent the current invite (creator, or whoever last rescheduled). */
+  proposed_by: UserBrief | null;
+  /** True when this is an invite I have to accept or decline. */
+  awaiting_me: boolean;
   partner: UserBrief | null;
   ends: Record<GameEnd, GameEndSlot>;
   my_end: GameEnd | null;
@@ -348,6 +353,14 @@ export async function scheduleGame(data: {
 
 export async function cancelGame(id: string) {
   return request<Game>(`/api/games/${id}/`, { method: 'DELETE' });
+}
+
+export async function acceptGame(id: string) {
+  return request<Game>(`/api/games/${id}/accept/`, { method: 'POST' });
+}
+
+export async function declineGame(id: string) {
+  return request<Game>(`/api/games/${id}/decline/`, { method: 'POST' });
 }
 
 export async function claimGameEnd(id: string, end: GameEnd) {

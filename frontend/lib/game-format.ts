@@ -3,11 +3,16 @@ import type { GameEnd, GameStatus } from './api';
 export const END_LABEL: Record<GameEnd, string> = { end_a: 'End A', end_b: 'End B' };
 
 export const STATUS_LABEL: Record<GameStatus, string> = {
+  pending: 'Invite',
+  declined: 'Declined',
   scheduled: 'Scheduled',
   live: 'Live',
   completed: 'Played',
   cancelled: 'Cancelled',
 };
+
+/** Games still ahead: open invites, accepted games and the one being played. */
+export const UPCOMING: GameStatus[] = ['pending', 'scheduled', 'live'];
 
 export function formatWhen(iso: string) {
   const d = new Date(iso);

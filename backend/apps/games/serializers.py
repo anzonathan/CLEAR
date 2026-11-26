@@ -20,11 +20,14 @@ class GameSerializer(serializers.ModelSerializer):
     ends = serializers.SerializerMethodField()
     my_end = serializers.SerializerMethodField()
     my_camera = serializers.SerializerMethodField()
+    proposed_by = serializers.SerializerMethodField()
+    awaiting_me = serializers.SerializerMethodField()
 
     class Meta:
         model = Game
         fields = [
             'id', 'title', 'connection', 'scheduled_at', 'court_mode', 'status',
+            'proposed_by', 'awaiting_me',
             'partner', 'ends', 'my_end', 'my_camera',
             'started_at', 'ended_at', 'analysis_status', 'analysis', 'created_at',
         ]
@@ -43,6 +46,12 @@ class GameSerializer(serializers.ModelSerializer):
 
     def get_my_end(self, obj):
         return obj.slot_for(self._me())
+
+    def get_proposed_by(self, obj):
+        return _user_brief(obj.proposed_by)
+
+    def get_awaiting_me(self, obj):
+        return obj.awaits(self._me())
 
     def get_my_camera(self, obj):
         slot = obj.slot_for(self._me())

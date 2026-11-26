@@ -61,7 +61,7 @@ export default function DevHome() {
 
   const live = games.filter((g) => g.status === 'live');
   const recorded = games.filter((g) => g.status === 'completed');
-  const scheduled = games.filter((g) => g.status === 'scheduled').sort((a, b) => a.scheduled_at.localeCompare(b.scheduled_at));
+  const scheduled = games.filter((g) => g.status === 'scheduled' || g.status === 'pending').sort((a, b) => a.scheduled_at.localeCompare(b.scheduled_at));
 
   return (
     <>

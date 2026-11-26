@@ -5,7 +5,9 @@ import Link from 'next/link';
 import { useParams, useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import {
+  acceptGame,
   cancelGame,
+  declineGame,
   claimGameEnd,
   getGame,
   releaseGameEnd,
@@ -52,10 +54,10 @@ export default function GamePage() {
     // Hold the auto-start while a developer is calibrating the cameras.
     !(game.ends.end_a.camera?.preview || game.ends.end_b.camera?.preview);
 
-  // Partner readiness and camera status change on the other phone: poll while it matters,
-  // faster once both ends are claimed so the auto-start reacts quickly.
+  // Partner readiness, invite answers and camera status change on the other phone: poll while
+  // it matters, faster once both ends are claimed so the auto-start reacts quickly.
   useEffect(() => {
-    if (!game || (game.status !== 'scheduled' && game.status !== 'live')) return;
+    if (!game || !['pending', 'scheduled', 'live'].includes(game.status)) return;
     const bothClaimed = !!(game.ends.end_a.user && game.ends.end_b.user);
     const t = window.setInterval(load, game.status === 'scheduled' && bothClaimed ? 1000 : 3000);
     return () => window.clearInterval(t);
@@ -118,7 +120,10 @@ export default function GamePage() {
   }
 
   const partnerName = game.partner?.name ?? 'your partner';
-  const editable = game.status === 'scheduled';
+  // Ends can be picked while the invite is open, so both phones are ready once it is accepted.
+  const editable = game.status === 'pending' || game.status === 'scheduled';
+  const pending = game.status === 'pending';
+  const proposerName = game.proposed_by?.name ?? partnerName;
   const bothClaimed = !!(game.ends.end_a.user && game.ends.end_b.user);
   const bothOnline = !!(game.ends.end_a.camera?.online && game.ends.end_b.camera?.online);
   const calibrating = !!(game.ends.end_a.camera?.preview || game.ends.end_b.camera?.preview);
@@ -141,6 +146,41 @@ export default function GamePage() {
         </div>
         <span className={`status-chip status-${game.status}`}>{STATUS_LABEL[game.status]}</span>
       </div>
+
+      {pending && (
+        <section className="panel game-invite" aria-labelledby="invite-h" aria-live="polite">
+          <div className="section-heading">
+            <h3 id="invite-h">{game.awaiting_me ? `${proposerName} invited you` : 'Invite sent'}</h3>
+          </div>
+          {game.awaiting_me ? (
+            <>
+              <p className="muted">
+                {game.court_mode === 'doubles' ? 'Doubles' : 'Singles'} on {formatWhen(game.scheduled_at)}. The game can only
+                start after you accept.
+              </p>
+              <div className="invite-actions">
+                <button type="button" className="btn btn-primary" disabled={busy} onClick={() => run(() => acceptGame(game.id), 'Invite accepted')}>
+                  Accept
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-ghost danger"
+                  disabled={busy}
+                  onClick={() => {
+                    if (window.confirm(`Decline this game with ${proposerName}?`)) {
+                      run(() => declineGame(game.id), 'Invite declined').then(() => router.push('/app/games'));
+                    }
+                  }}
+                >
+                  Decline
+                </button>
+              </div>
+            </>
+          ) : (
+            <p className="muted">Waiting for {partnerName} to accept. You can pick your end meanwhile.</p>
+          )}
+        </section>
+      )}
 
       <div className="game-layout">
         <section className="panel game-ends" aria-labelledby="ends-h">
@@ -197,32 +237,38 @@ export default function GamePage() {
             <h3 id="ctl-h">{game.status === 'live' ? 'Game in progress' : game.status === 'completed' ? 'Result' : 'Start the game'}</h3>
           </div>
 
-          {game.status === 'scheduled' && (
+          {editable && (
             <>
               <ul className="checklist">
+                <li className={pending ? '' : 'ok'}>{game.awaiting_me ? 'You accepted the invite' : `${partnerName} accepted the invite`}</li>
                 <li className={game.my_end ? 'ok' : ''}>You picked an end</li>
                 <li className={bothClaimed ? 'ok' : ''}>{partnerName} picked the other end</li>
                 <li className={bothOnline ? 'ok' : ''}>Both cameras are on</li>
               </ul>
               <p className="muted" aria-live="polite">
-                {calibrating
+                {pending
+                  ? 'The game starts by itself once the invite is accepted and both cameras are on and steady.'
+                  : calibrating
                   ? 'A referee is calibrating the cameras. The game starts once they finish.'
                   : bothOnline
                   ? 'Cameras are steady. Starting… your phone will chime when recording begins.'
                   : 'The game starts by itself once both cameras are on and steady. Your phone chimes when it begins.'}
               </p>
+              {!game.awaiting_me && (
               <button
                 type="button"
                 className="btn btn-ghost danger"
                 disabled={busy}
                 onClick={() => {
-                  if (window.confirm('Cancel this game? Both camera slots are freed.')) {
+                  const msg = pending && !game.awaiting_me ? 'Withdraw this invite?' : 'Cancel this game? Both camera slots are freed.';
+                  if (window.confirm(msg)) {
                     run(() => cancelGame(game.id), 'Game cancelled').then(() => router.push('/app/games'));
                   }
                 }}
               >
-                Cancel game
+                {pending && !game.awaiting_me ? 'Withdraw invite' : 'Cancel game'}
               </button>
+              )}
             </>
           )}
 
@@ -262,6 +308,13 @@ export default function GamePage() {
             ))}
 
           {game.status === 'cancelled' && <p className="muted">This game was cancelled.</p>}
+          {game.status === 'declined' && (
+            <p className="muted">
+              {game.proposed_by && game.proposed_by.id !== game.partner?.id
+                ? `${partnerName} declined this invite.`
+                : 'You declined this invite.'}
+            </p>
+          )}
         </section>
       </div>
     </div>

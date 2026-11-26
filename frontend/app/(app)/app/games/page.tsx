@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { toast } from 'sonner';
 import { getGames, Game } from '@/lib/api';
 import GameRow from '@/components/GameRow';
+import { UPCOMING } from '@/lib/game-format';
 
 export default function GamesPage() {
   const [games, setGames] = useState<Game[]>([]);
@@ -17,8 +18,11 @@ export default function GamesPage() {
       .finally(() => setLoading(false));
   }, []);
 
+  const invites = games
+    .filter((g) => g.awaiting_me)
+    .sort((a, b) => a.scheduled_at.localeCompare(b.scheduled_at));
   const upcoming = games
-    .filter((g) => g.status === 'scheduled' || g.status === 'live')
+    .filter((g) => UPCOMING.includes(g.status) && !g.awaiting_me)
     .sort((a, b) => a.scheduled_at.localeCompare(b.scheduled_at));
   const past = games.filter((g) => g.status === 'completed');
 
@@ -30,6 +34,7 @@ export default function GamesPage() {
       subtitle={g.title ? `vs ${g.partner?.name ?? 'partner'}` : g.court_mode}
       when={g.scheduled_at}
       status={g.status}
+              awaitingMe={g.awaiting_me}
     />
   );
 
@@ -59,6 +64,14 @@ export default function GamesPage() {
         </div>
       ) : (
         <>
+          {invites.length > 0 && (
+            <div className="panel">
+              <div className="section-heading">
+                <h3>Invites for you</h3>
+              </div>
+              {invites.map(row)}
+            </div>
+          )}
           <div className="panel">
             <div className="section-heading">
               <h3>Upcoming</h3>

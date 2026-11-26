@@ -1048,9 +1048,13 @@ body { background: var(--paper); }
 }
 .status-chip.status-completed,
 .status-chip.analysis-done { background: var(--accent); color: var(--primary-deep); }
+.status-chip.status-pending { background: var(--secondary); color: var(--text); }
+.connection-row span.status-chip.status-pending { color: var(--text); }
 .status-chip.status-cancelled,
+.status-chip.status-declined,
 .status-chip.analysis-none { background: var(--paper); color: var(--muted); }
-.connection-row span.status-chip.status-cancelled { color: var(--muted); }
+.connection-row span.status-chip.status-cancelled,
+.connection-row span.status-chip.status-declined { color: var(--muted); }
 .status-chip.analysis-running { background: var(--secondary); color: var(--text); }
 .status-chip.analysis-failed { background: #f6d9d4; color: #9c2f22; }
 
@@ -1093,6 +1097,9 @@ body { background: var(--paper); }
   border-radius: 16px;
   padding: 18px;
 }
+.game-invite { border: 2px solid var(--secondary); }
+.invite-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.invite-actions .btn { flex: 1 1 140px; }
 .game-summary h2 { font: 600 22px/1.05 'Oswald'; text-transform: uppercase; margin-top: 6px; }
 .game-summary .eyebrow { color: var(--accent); }
 

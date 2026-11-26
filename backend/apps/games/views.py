@@ -43,7 +43,7 @@ class GameViewSet(viewsets.ModelViewSet):
         if connection:
             qs = qs.filter(connection_id=connection)
         if self.request.query_params.get('upcoming'):
-            qs = qs.filter(status__in=['scheduled', 'live']).order_by('scheduled_at')
+            qs = qs.filter(status__in=['pending', 'scheduled', 'live']).order_by('scheduled_at')
         return qs
 
     def create(self, request):
@@ -59,28 +59,54 @@ class GameViewSet(viewsets.ModelViewSet):
         game = Game.objects.create(
             connection=connection, created_by=request.user, scheduled_at=v['scheduled_at'],
             court_mode=v['court_mode'], title=v.get('title', ''),
+            proposed_by=request.user, status='pending',
         )
         return Response(self.get_serializer(game).data, status=status.HTTP_201_CREATED)
 
     def partial_update(self, request, *args, **kwargs):
+        """Edit a game before it starts. A new time or format goes back to the partner to accept."""
         game = self.get_object()
-        if game.status != 'scheduled':
-            return Response({'error': 'Only scheduled games can be changed.'}, status=400)
+        if game.status not in services.OPEN_STATUSES:
+            return Response({'error': 'Only games that have not started can be changed.'}, status=400)
         data = GameUpdateSerializer(game, data=request.data, partial=True)
         data.is_valid(raise_exception=True)
-        data.save()
+        changed = any(
+            k in data.validated_data and data.validated_data[k] != getattr(game, k)
+            for k in ('scheduled_at', 'court_mode')
+        )
+        if changed:
+            data.save(status='pending', proposed_by=request.user)
+        else:
+            data.save()
         return Response(self.get_serializer(game).data)
 
     def destroy(self, request, *args, **kwargs):
-        """Cancel a game that has not started. Frees both cameras."""
+        """Cancel a game that has not started, or withdraw an invite. Frees both cameras."""
         game = self.get_object()
-        if game.status != 'scheduled':
-            return Response({'error': 'Only scheduled games can be cancelled.'}, status=400)
-        for user in (game.camera_a_user, game.camera_b_user):
-            if user is not None:
-                services.release_end(game, user, save=False)
-        game.status = 'cancelled'
-        game.save()
+        try:
+            services.cancel_game(game)
+        except services.GameError as exc:
+            return _error(exc)
+        return Response(self.get_serializer(game).data)
+
+    @action(detail=True, methods=['post'])
+    def accept(self, request, pk=None):
+        """The invited player accepts the game."""
+        game = self.get_object()
+        try:
+            services.accept_invite(game, request.user)
+        except services.GameError as exc:
+            return _error(exc)
+        return Response(self.get_serializer(game).data)
+
+    @action(detail=True, methods=['post'])
+    def decline(self, request, pk=None):
+        """The invited player turns the game down."""
+        game = self.get_object()
+        try:
+            services.decline_invite(game, request.user)
+        except services.GameError as exc:
+            return _error(exc)
         return Response(self.get_serializer(game).data)
 
     @action(detail=True, methods=['post', 'delete'])
@@ -122,7 +148,7 @@ class DevGameViewSet(viewsets.ReadOnlyModelViewSet):
     permission_classes = [IsAuthenticated, IsAdminOrDeveloper]
 
     def get_queryset(self):
-        qs = Game.objects.exclude(status='cancelled').select_related(
+        qs = Game.objects.exclude(status__in=['cancelled', 'declined']).select_related(
             'connection__user_a', 'connection__user_b', 'camera_a_user', 'camera_b_user'
         )
         st = self.request.query_params.get('status')
@@ -198,7 +224,7 @@ class StreamLiveView(APIView):
         from websockets.field import ingest_snapshot
 
         stats = ingest_snapshot()
-        games = Game.objects.filter(status__in=['scheduled', 'live']).select_related('camera_a_user', 'camera_b_user', 'connection__user_a', 'connection__user_b')
+        games = Game.objects.filter(status__in=['pending', 'scheduled', 'live']).select_related('camera_a_user', 'camera_b_user', 'connection__user_a', 'connection__user_b')
         owners = {}
         for g in games:
             pair = f"{g.connection.user_a.name or g.connection.user_a.email} vs {g.connection.user_b.name or g.connection.user_b.email}"

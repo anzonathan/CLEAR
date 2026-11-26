@@ -5,7 +5,7 @@ import Link from 'next/link';
 import { useParams, useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import { getConnection, getGames, scheduleGame, ConnectionDetail, Game } from '@/lib/api';
-import { toLocalInput } from '@/lib/game-format';
+import { toLocalInput, UPCOMING } from '@/lib/game-format';
 import GameRow from '@/components/GameRow';
 
 function defaultStart() {
@@ -39,7 +39,7 @@ export default function ConnectionPage() {
     setSaving(true);
     try {
       const game = await scheduleGame({ connection_id: id, scheduled_at: new Date().toISOString(), court_mode: courtMode });
-      toast.success('Session created', { description: `Pick your end and start your camera. ${connection?.other_name ?? 'Your partner'} does the same.` });
+      toast.success('Invite sent', { description: `${connection?.other_name ?? 'Your partner'} has to accept before the game starts. Pick your end meanwhile.` });
       router.push(`/app/games/${game.id}`);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Could not start a session');
@@ -58,7 +58,7 @@ export default function ConnectionPage() {
         court_mode: courtMode,
         title: title.trim() || undefined,
       });
-      toast.success('Game scheduled', { description: 'Next, pick which end your phone films.' });
+      toast.success('Invite sent', { description: `${connection?.other_name ?? 'Your partner'} has to accept it. Next, pick which end your phone films.` });
       router.push(`/app/games/${game.id}`);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Could not schedule the game');
@@ -88,7 +88,7 @@ export default function ConnectionPage() {
     );
   }
 
-  const upcoming = games.filter((g) => g.status === 'scheduled' || g.status === 'live');
+  const upcoming = games.filter((g) => UPCOMING.includes(g.status));
   const past = games.filter((g) => g.status === 'completed');
   const name = connection.other_name || connection.other_email;
 
@@ -105,10 +105,10 @@ export default function ConnectionPage() {
       <div className="panel start-now">
         <div>
           <h3>Play now</h3>
-          <p className="muted">Start a session with {name} right away. Recording begins when both phones are steady.</p>
+          <p className="muted">Invite {name} to play right away. Once they accept, recording begins when both phones are steady.</p>
         </div>
         <button type="button" className="btn btn-primary" disabled={saving} onClick={handleStartNow}>
-          Start session now
+          Invite to play now
         </button>
       </div>
 
@@ -152,7 +152,7 @@ export default function ConnectionPage() {
           </label>
 
           <button type="submit" className="btn btn-primary" disabled={saving}>
-            {saving ? 'Scheduling…' : 'Schedule game'}
+            {saving ? 'Sending…' : 'Send invite'}
           </button>
         </form>
 
@@ -165,7 +165,7 @@ export default function ConnectionPage() {
               <p className="muted list-empty">Nothing scheduled with {name} yet.</p>
             ) : (
               upcoming.map((g) => (
-                <GameRow key={g.id} href={`/app/games/${g.id}`} title={g.title || `vs ${name}`} subtitle={g.court_mode} when={g.scheduled_at} status={g.status} />
+                <GameRow key={g.id} href={`/app/games/${g.id}`} title={g.title || `vs ${name}`} subtitle={g.court_mode} when={g.scheduled_at} status={g.status} awaitingMe={g.awaiting_me} />
               ))
             )}
           </div>
@@ -175,7 +175,7 @@ export default function ConnectionPage() {
                 <h3>Played</h3>
               </div>
               {past.map((g) => (
-                <GameRow key={g.id} href={`/app/games/${g.id}`} title={g.title || `vs ${name}`} subtitle={g.court_mode} when={g.scheduled_at} status={g.status} />
+                <GameRow key={g.id} href={`/app/games/${g.id}`} title={g.title || `vs ${name}`} subtitle={g.court_mode} when={g.scheduled_at} status={g.status} awaitingMe={g.awaiting_me} />
               ))}
             </div>
           )}

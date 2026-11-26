@@ -13,11 +13,12 @@ from apps.users.permissions import IsAdminOrDeveloper
 
 from apps.field.views import get_field_manager
 
-from . import media, services
+from . import datasets, media, services
 from rest_framework.views import APIView
 
-from .models import Game, StreamSettings
+from .models import DatasetExport, Game, StreamSettings
 from .serializers import (
+    DatasetExportSerializer,
     DevGameSerializer,
     GameCreateSerializer,
     GameSerializer,
@@ -290,6 +291,58 @@ class DevGameViewSet(viewsets.ReadOnlyModelViewSet):
         if not cam_id or not path.exists():
             raise Http404
         return FileResponse(open(path, 'rb'), content_type='image/png')
+
+
+class DatasetExportViewSet(viewsets.ModelViewSet):
+    """Data prep: batch-export trimmed clips (raw, overlay, frames, pre-labels, metadata) for labelling."""
+
+    serializer_class = DatasetExportSerializer
+    permission_classes = [IsAuthenticated, IsAdminOrDeveloper]
+    http_method_names = ['get', 'post', 'delete']
+    queryset = DatasetExport.objects.select_related('created_by')
+
+    def list(self, request, *args, **kwargs):
+        datasets.reap_orphans()
+        return super().list(request, *args, **kwargs)
+
+    def create(self, request, *args, **kwargs):
+        """``{clips: [{game_id, end, segment_id|null}], options: {...}, name?}`` -> queued export."""
+        body = request.data if isinstance(request.data, dict) else {}
+        try:
+            export = datasets.create_export(request.user, body.get('clips'), body.get('options'), body.get('name', ''))
+        except services.GameError as exc:
+            return _error(exc)
+        return Response(self.get_serializer(export).data, status=status.HTTP_202_ACCEPTED)
+
+    def destroy(self, request, *args, **kwargs):
+        try:
+            datasets.delete_export(self.get_object())
+        except services.GameError as exc:
+            return _error(exc)
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+    @action(detail=True, methods=['get'])
+    def download(self, request, pk=None):
+        export = self.get_object()
+        path = datasets.export_path(export) if export.status == 'done' else None
+        if path is None or not path.exists():
+            raise Http404
+        name = f"clear-dataset-{export.created_at:%Y%m%d-%H%M}-{export.id[:6]}.zip"
+        return FileResponse(open(path, 'rb'), as_attachment=True, filename=name, content_type='application/zip')
+
+    @action(detail=False, methods=['get'])
+    def defaults(self, request):
+        return Response(datasets.selection_options())
+
+    @action(detail=False, methods=['post'])
+    def analyze(self, request):
+        """``{clips: [...]}``: analyse the selected clips, one background run per game."""
+        body = request.data if isinstance(request.data, dict) else {}
+        try:
+            res = datasets.start_batch_analysis(body.get('clips'))
+        except services.GameError as exc:
+            return _error(exc)
+        return Response(res, status=status.HTTP_202_ACCEPTED)
 
 
 class StreamSettingsView(APIView):

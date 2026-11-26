@@ -4,7 +4,7 @@ from django.utils import timezone
 from rest_framework import serializers
 
 from . import services
-from .models import Game
+from .models import DatasetExport, Game
 
 
 def _user_brief(user):
@@ -178,3 +178,17 @@ class StreamSettingsSerializer(serializers.ModelSerializer):
         if get('yolo_imgsz') % 32:
             raise serializers.ValidationError({'yolo_imgsz': 'Must be a multiple of 32.'})
         return data
+
+
+class DatasetExportSerializer(serializers.ModelSerializer):
+    created_by = serializers.SerializerMethodField()
+
+    class Meta:
+        model = DatasetExport
+        fields = [
+            'id', 'name', 'created_by', 'clips', 'options', 'status', 'progress', 'error',
+            'result', 'created_at', 'finished_at',
+        ]
+
+    def get_created_by(self, obj):
+        return obj.created_by.name if obj.created_by else None

@@ -144,6 +144,10 @@ class DevGameApiTests(TestCase):
             mock.patch('apps.field.views.get_field_manager', return_value=self.manager),
             # Run analysis synchronously so the test sees the result.
             mock.patch('apps.games.services.threading.Thread', new=lambda target, args, daemon: SimpleNamespace(start=lambda: target(*args))),
+            # Background workers drop stale DB connections; inside a test transaction that
+            # would close the test's own connection.
+            mock.patch('apps.games.services.close_old_connections'),
+            mock.patch('apps.games.datasets.close_old_connections'),
         ]
         for p in patches:
             p.start()
@@ -510,3 +514,89 @@ class GameInviteTests(TestCase):
         self.client_for(self.bob).post(f'/api/games/{gid}/accept/')
         res = self.client_for(self.alice).patch(f'/api/games/{gid}/', {'title': 'Friendly'}, format='json')
         self.assertEqual(res.data['status'], 'scheduled')
+
+
+class DatasetExportApiTests(TestCase):
+    """Data prep: batch analysis and labelling exports across games."""
+
+    def setUp(self):
+        DevGameApiTests.setUp(self)
+        self.game.segments = [{'id': 'r1', 'end': 'end_a', 'label': 'Rally 1', 'start_s': 0.5, 'end_s': 1.0}]
+        self.game.save()
+        p = mock.patch(
+            'apps.games.datasets.threading.Thread',
+            new=lambda target, args, daemon: SimpleNamespace(start=lambda: target(*args)),
+        )
+        p.start()
+        self.addCleanup(p.stop)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def clips(self, *segment_ids):
+        return [{'game_id': self.game.id, 'end': 'end_a', 'segment_id': s} for s in segment_ids]
+
+    def test_players_cannot_use_data_prep(self):
+        c = APIClient()
+        c.force_authenticate(self.game.created_by)
+        self.assertEqual(c.get('/api/dev/datasets/').status_code, 403)
+
+    def test_export_builds_zip_with_clips_frames_and_labels(self):
+        with mock.patch('src.detect.detector.HybridTennisDetector') as det:
+            det.return_value.detect.return_value = SimpleNamespace(balls=[], players=[], rackets=[])
+            resp = self.client.post(
+                '/api/dev/datasets/',
+                {'clips': self.clips('r1', None), 'options': {'frames_fps': 10}, 'name': 'Batch 1'},
+                format='json',
+            )
+        self.assertEqual(resp.status_code, 202, resp.content)
+        export_id = resp.json()['id']
+        resp = self.client.get(f'/api/dev/datasets/{export_id}/')
+        body = resp.json()
+        self.assertEqual(body['status'], 'done', body)
+        self.assertEqual(body['result']['clips'], 2)
+        self.assertEqual(body['result']['failed_clips'], 0)
+        self.assertEqual(body['result']['frames'], 5 + 20)  # 0.5 s of r1 + 2 s full, at 10 fps
+
+        resp = self.client.get(f'/api/dev/datasets/{export_id}/download/')
+        self.assertEqual(resp.status_code, 200)
+        z = zipfile.ZipFile(io.BytesIO(b''.join(resp.streaming_content)))
+        names = set(z.namelist())
+        gid = self.game.id[:8]
+        self.assertIn(f'clips/{gid}_end_a_r1/raw.mp4', names)
+        self.assertIn(f'clips/{gid}_end_a_full/raw.mp4', names)
+        self.assertIn(f'roboflow/images/{gid}_end_a_r1_f000015.jpg', names)
+        self.assertIn(f'roboflow/labels/{gid}_end_a_r1_f000015.txt', names)
+        self.assertIn('roboflow/data.yaml', names)
+        import json
+
+        meta = json.loads(z.read(f'clips/{gid}_end_a_r1/meta.json'))
+        self.assertEqual((meta['start_frame'], meta['end_frame']), (15, 30))
+        self.assertEqual(meta['players'], ['A', 'B'])
+        self.assertEqual(meta['segment_label'], 'Rally 1')
+
+        resp = self.client.delete(f'/api/dev/datasets/{export_id}/')
+        self.assertEqual(resp.status_code, 204)
+        self.assertFalse((self.data_dir / 'exports' / f'{export_id}.zip').exists())
+
+    def test_export_rejects_bad_selection(self):
+        resp = self.client.post('/api/dev/datasets/', {'clips': []}, format='json')
+        self.assertEqual(resp.status_code, 400)
+        resp = self.client.post('/api/dev/datasets/', {'clips': self.clips('gone')}, format='json')
+        self.assertEqual(resp.status_code, 404)
+
+    def test_batch_analyse_runs_full_and_segments_per_game(self):
+        with mock.patch('apps.games.services.start_analysis') as start:
+            resp = self.client.post('/api/dev/datasets/analyze/', {'clips': self.clips('r1', None)}, format='json')
+        self.assertEqual(resp.status_code, 202, resp.content)
+        self.assertEqual(resp.json()['started'], [self.game.id])
+        start.assert_called_once()
+        self.assertEqual(start.call_args.kwargs, {'segment_ids': ['r1'], 'full': True})
+
+    def test_orphaned_export_is_marked_failed(self):
+        from .models import DatasetExport
+
+        DatasetExport.objects.create(clips=self.clips('r1'), status='running')
+        rows = self.client.get('/api/dev/datasets/').json()
+        self.assertEqual(rows[0]['status'], 'failed')
+        self.assertIn('restarted', rows[0]['error'])

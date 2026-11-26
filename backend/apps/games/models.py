@@ -141,3 +141,40 @@ class StreamSettings(models.Model):
             'min_quality': self.min_quality,
             'min_fps': self.min_fps,
         }
+
+
+class DatasetExport(models.Model):
+    """A batch export of trimmed clips for labelling, built in the background into a ZIP.
+
+    ``clips`` is the developer's selection: [{game_id, end, segment_id|null}]. The ZIP
+    lives at <field data dir>/exports/<id>.zip (see apps.games.datasets).
+    """
+
+    STATUS_CHOICES = [
+        ('queued', 'Queued'),
+        ('running', 'Running'),
+        ('done', 'Done'),
+        ('failed', 'Failed'),
+    ]
+
+    id = models.CharField(max_length=32, primary_key=True, default=generate_id)
+    name = models.CharField(max_length=120, blank=True)
+    created_by = models.ForeignKey(
+        'users.User', on_delete=models.SET_NULL, null=True, blank=True, related_name='+'
+    )
+    clips = models.JSONField(default=list)
+    options = models.JSONField(default=dict)
+    status = models.CharField(max_length=10, choices=STATUS_CHOICES, default='queued')
+    progress = models.CharField(max_length=200, blank=True)
+    error = models.TextField(blank=True)
+    # Counts and size once built: {clips, failed_clips, frames, labelled_frames, size_bytes}
+    result = models.JSONField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    finished_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = 'dataset_exports'
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return self.name or f'Export {self.id}'

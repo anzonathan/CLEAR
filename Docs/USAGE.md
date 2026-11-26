@@ -32,10 +32,10 @@ Your partner now appears under **Connect**.
 
 Open your partner from **Connect**.
 
-- **Start session now** creates a game that starts as soon as both cameras are ready.
-- **Schedule for later** sets a date and time, singles or doubles, and an optional name.
+- **Invite to play now** asks your partner to play right away.
+- **Send invite** (under **Schedule for later**) proposes a date and time, singles or doubles, and an optional name.
 
-Scheduled games appear under **Games** and on the home screen.
+Your partner has to accept the invite before the game can start. They see it under **Invites for you** on **Games** and at the top of the home screen, with **Accept** and **Decline**. You can pick your end while you wait, or withdraw the invite. Changing the time or format sends the game back to your partner to accept again.
 
 ### 3. Set up your phone
 
@@ -119,6 +119,25 @@ Tools on the page:
 - **Auto-detect** tries to find the court lines itself and saves the result. Always check the overlay after using it.
 - **New frame** grabs a fresh still.
 - **Clear points** starts over.
+
+### Data prep (`/dev/data`)
+
+Prepare clips for labelling, for example in Roboflow.
+
+1. **Pick clips.** Every recorded game is listed with each end's full recording and its trimmed segments. Tick single clips, or tick a game to select all of its clips. To make new segments, open the game with **Trim** and mark them on the recording.
+2. **Analyse (optional).** **Analyse selected** runs the offline pipeline on the selected clips, one background run per game. This adds the pipeline overlay, tracks and line calls to the export. Labelling does not need it.
+3. **Export.** Choose what goes in, then press **Export**. The ZIP builds in the background. Download it from **Exports** when it shows **Ready**.
+   - **Raw clips:** the recording trimmed to the clip, as H.264.
+   - **Overlay clips:** the same range with the CLEAR overlay. The overlay comes from the pipeline when that range was analysed, otherwise from the overlay recorded live.
+   - **Frames for labelling:** JPGs sampled at the chosen rate (at most 3000 per clip).
+   - **YOLO pre-labels:** boxes for ball, player and racket on each frame, from the stock detector. Check every box before you train on them.
+   - **Analysis data:** summary, tracks, bounces and faults, when exactly that range was analysed.
+
+Every export also holds `manifest.json`, `clips.csv` and `frames.csv`, plus `meta.json` and the camera calibration for each clip. `frame_idx` is always the frame number in the source recording, so a frame, its row in `tracks.csv` and its place in the clip line up. `README.md` in the ZIP describes the layout.
+
+To label in Roboflow, upload the `roboflow/` folder from the ZIP as a YOLO dataset. The images and pre-labels import together.
+
+Exports run one at a time. An export that was running when the server restarted shows as failed: start it again.
 
 ### Streaming (`/dev/streaming`)
 

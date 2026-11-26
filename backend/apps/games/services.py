@@ -427,12 +427,16 @@ def segment_dir(game, seg):
     return analysis_dir(game) / camera_for_end(game, seg['end']) / 'segments' / seg['id']
 
 
-def start_analysis(game, segment_ids=None):
+def start_analysis(game, segment_ids=None, full=None):
     """Run the offline pipeline in a background thread.
 
     ``segment_ids`` None: the whole recording of each camera (as before).
     Otherwise only those segments, each over its own time range.
+    ``full`` True also analyses the whole recordings alongside the segments (batch runs
+    from data prep); it defaults to True only when no segments are given.
     """
+    if full is None:
+        full = segment_ids is None
     if game.status != 'completed':
         raise GameError('Only finished games can be analysed.')
     if game.analysis_status == 'running':
@@ -454,7 +458,7 @@ def start_analysis(game, segment_ids=None):
     out_root = analysis_dir(game)
     game.analysis_status = 'running'
     game.save(update_fields=['analysis_status', 'updated_at'])
-    threading.Thread(target=_run_analysis, args=(game.id, files, out_root, segments), daemon=True).start()
+    threading.Thread(target=_run_analysis, args=(game.id, files, out_root, segments, full), daemon=True).start()
     return game
 
 
@@ -519,17 +523,19 @@ def _run_segments(game, manager, files, segments):
     return results
 
 
-def _run_analysis(game_id, files, out_root, segments=None):
+def _run_analysis(game_id, files, out_root, segments=None, full=None):
     close_old_connections()
     try:
         game = Game.objects.get(id=game_id)
         manager = get_field_manager()
         analysis = dict(game.analysis or {})
         analysis.pop('error', None)
-        if segments is None:
+        if full is None:
+            full = segments is None
+        if full:
             analysis['cameras'] = _run_full(game, manager, files, out_root)
             analysis['finished_at'] = timezone.now().isoformat()
-        else:
+        if segments:
             done = dict(analysis.get('segments') or {})
             done.update(_run_segments(game, manager, files, segments))
             analysis['segments'] = done

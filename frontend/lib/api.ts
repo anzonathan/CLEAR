@@ -531,6 +531,74 @@ export function devGameChartUrl(id: string, end: GameEnd) {
   return `${API_URL}/api/dev/games/${id}/chart/${end}/`;
 }
 
+// Data prep: batch analysis and labelling-dataset exports across games.
+/** One selectable clip: a whole end of a recording (segment_id null) or a trimmed segment. */
+export interface ClipRef {
+  game_id: string;
+  end: GameEnd;
+  segment_id: string | null;
+}
+
+export interface DatasetOptions {
+  raw: boolean;
+  overlay: boolean;
+  /** Frames per second saved as JPGs for labelling; 0 = none. */
+  frames_fps: number;
+  /** YOLO pre-labels (ball, player, racket) for the saved frames, from the stock detector. */
+  prelabels: boolean;
+  analysis: boolean;
+  jpeg_quality: number;
+}
+
+export interface DatasetExport {
+  id: string;
+  name: string;
+  created_by: string | null;
+  clips: ClipRef[];
+  options: DatasetOptions;
+  status: 'queued' | 'running' | 'done' | 'failed';
+  progress: string;
+  error: string;
+  result: {
+    clips: number;
+    failed_clips: number;
+    frames: number;
+    labelled_frames: number;
+    size_bytes: number;
+    skipped?: number;
+  } | null;
+  created_at: string;
+  finished_at: string | null;
+}
+
+export async function getDatasetDefaults() {
+  return request<{ options: DatasetOptions; classes: string[]; max_frames_per_clip: number }>('/api/dev/datasets/defaults/');
+}
+
+export async function getDatasetExports() {
+  return request<DatasetExport[]>('/api/dev/datasets/');
+}
+
+export async function createDatasetExport(clips: ClipRef[], options: DatasetOptions, name?: string) {
+  return request<DatasetExport>('/api/dev/datasets/', { method: 'POST', body: JSON.stringify({ clips, options, name }) });
+}
+
+export async function deleteDatasetExport(id: string) {
+  return request<void>(`/api/dev/datasets/${id}/`, { method: 'DELETE' });
+}
+
+export function datasetDownloadUrl(id: string) {
+  return `${API_URL}/api/dev/datasets/${id}/download/`;
+}
+
+/** Analyse the selected clips: one background run per game. */
+export async function analyzeClips(clips: ClipRef[]) {
+  return request<{ started: string[]; errors: Record<string, string> }>('/api/dev/datasets/analyze/', {
+    method: 'POST',
+    body: JSON.stringify({ clips }),
+  });
+}
+
 export async function startCalibrationPreview(gameId: string) {
   return request<DevGame>(`/api/dev/games/${gameId}/preview/`, { method: 'POST' });
 }

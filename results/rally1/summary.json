@@ -168,5 +168,13 @@
       }
     ]
   },
-  "annotated_video": "/Users/nathanielmugenyi/code/Projects/CLEAR/CLEAR/results/rally1/annotated_rally.mp4"
+  "annotated_video": "/Users/nathanielmugenyi/code/Projects/CLEAR/CLEAR/results/rally1/annotated_rally.mp4",
+  "segment": {
+    "start_frame": 0,
+    "end_frame": 280,
+    "start_s": 0.0,
+    "end_s": 4.667,
+    "source_frames": 280,
+    "source": "ucu_clay_rally.mp4"
+  }
 }

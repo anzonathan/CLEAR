@@ -127,10 +127,22 @@ sessions/<camera_id>/                 snapshots, detection event logs
 recordings/<rec_id>/meta.json         recording index
 recordings/<rec_id>/<camera_id>_raw.mp4    raw feed (input to analysis)
 recordings/<rec_id>/<camera_id>_annot.mp4  annotated feed
-analysis/<game_id>/<camera_id>/       summary.json, bounces.json, court_analytics.png, annotated_rally.mp4
+recordings/<rec_id>/<camera_id>_*_web.mp4  H.264 copy for browser playback (made on first preview)
+analysis/<game_id>/<camera_id>/       summary.json, bounces.json, tracks.csv, court_analytics.png, annotated_rally.mp4
+analysis/<game_id>/<camera_id>/segments/<segment_id>/   same files, for one developer-marked segment
 ```
 
 Recordings grow at roughly the upload rate of both phones. Clean old ones out periodically.
+
+**Recording preview.** Recordings are written as `mp4v`, which browsers cannot play. The first time a developer
+opens a recording in **Dev tools → Games → *game* → Recording preview**, the backend converts it once with
+`ffmpeg`, which is installed in the backend image, and keeps the `*_web.mp4` copy next to the original. That copy
+is roughly the same size as the original or smaller. Conversion runs in the background, and the page polls until
+it is ready. Deleting a `*_web.mp4` is safe: it is rebuilt on the next preview. Set `FFMPEG_BIN` to use a
+different ffmpeg binary.
+
+**Data export.** *Export selected* / *Export all* on that page downloads a ZIP (`manifest.json`, `runs.csv`, and
+per run `summary.json`, `bounces.csv`, `tracks.csv`, `faults.csv`) for `notebooks/post_analysis.ipynb`.
 
 ## 6. Deploy
 

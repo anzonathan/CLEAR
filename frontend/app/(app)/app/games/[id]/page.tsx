@@ -32,15 +32,29 @@ export default function GamePage() {
   const steadySinceRef = useRef<number | null>(null);
   const autoStartingRef = useRef(false);
 
+  // The game this page shows. Follows a developer's "Next game" in place (same page, same
+  // mounted camera), so the phone keeps streaming without the player tapping again.
+  const [gameId, setGameId] = useState(id);
+  useEffect(() => setGameId(id), [id]);
+
   const load = useCallback(async () => {
     try {
-      setGame(await getGame(id));
+      let g = await getGame(gameId);
+      if (g.status === 'completed' && g.next_game_id) {
+        // Swap to the next game in this same update: rendering the finished game would
+        // unmount the camera and stop it.
+        g = await getGame(g.next_game_id);
+        setGameId(g.id);
+        window.history.replaceState(null, '', `/app/games/${g.id}`);
+        toast.success('Next game started', { description: 'Keep your phone where it is: your camera stays on.' });
+      }
+      setGame(g);
     } catch (err) {
       toast.error('Could not load this game', { description: err instanceof Error ? err.message : undefined });
     } finally {
       setLoading(false);
     }
-  }, [id]);
+  }, [gameId]);
 
   useEffect(() => {
     load();
@@ -77,7 +91,9 @@ export default function GamePage() {
     startGame(game.id)
       .then((g) => {
         setGame(g);
-        toast.success('Game started', { description: 'Both cameras are live and recording.' });
+        toast.success('Game started', {
+          description: g.dev_mode ? 'Both cameras are live. A developer controls the recording.' : 'Both cameras are live and recording.',
+        });
       })
       .catch((err) => toast.error(err instanceof Error ? err.message : 'Could not start the game'))
       .finally(() => {
@@ -274,7 +290,20 @@ export default function GamePage() {
 
           {game.status === 'live' && (
             <>
-              <p className="muted">Both cameras stream to the referee and the game is being recorded.</p>
+              <p className="muted">
+                {!game.dev_mode
+                  ? 'Both cameras stream to the referee and the game is being recorded.'
+                  : game.recording_state === 'recording'
+                  ? 'Dev mode: both cameras stream and a developer is recording.'
+                  : game.recording_state === 'paused'
+                  ? 'Dev mode: recording is paused by the developer. Keep playing.'
+                  : 'Dev mode: both cameras stream; recording starts when the developer starts it.'}
+              </p>
+              {game.dev_mode && (
+                <span className={`status-chip rec-chip rec-${game.recording_state}`} aria-live="polite">
+                  {game.recording_state === 'recording' ? 'Recording' : game.recording_state === 'paused' ? 'Paused' : 'Not recording'}
+                </span>
+              )}
               <button type="button" className="btn btn-primary" disabled={busy} onClick={() => run(() => stopGame(game.id), 'Game ended. Recording saved.')}>
                 End game
               </button>

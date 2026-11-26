@@ -254,6 +254,8 @@ export type GameEnd = 'end_a' | 'end_b';
 /** 'pending' is an invite the partner has not accepted yet; 'declined' is one they turned down. */
 export type GameStatus = 'pending' | 'declined' | 'scheduled' | 'live' | 'completed' | 'cancelled';
 export type AnalysisStatus = 'none' | 'running' | 'done' | 'failed';
+/** Live: off | recording | paused. Over: saved | none. */
+export type RecordingState = 'off' | 'recording' | 'paused' | 'saved' | 'none';
 
 export interface UserBrief {
   id: string;
@@ -297,15 +299,53 @@ export interface AnalysisReport {
     in_calls: number;
     out_calls: number;
     doubt_zone_calls: number;
+    bounces?: AnalysisBounce[];
   };
+  fault_events?: AnalysisFault[];
   foot_faults?: unknown[];
   service_faults?: unknown[];
+  /** Frame range actually analysed (absolute frames of the recording). */
+  segment?: { start_frame: number; end_frame: number; start_s: number; end_s: number };
+}
+
+export interface AnalysisBounce {
+  frame_idx: number;
+  call: 'IN' | 'OUT' | string;
+  is_in: boolean;
+  in_doubt_zone: boolean;
+  abs_margin_cm: number;
+  speed_kmh: number;
+}
+
+export interface AnalysisFault {
+  frame_idx: number;
+  fault_type: string;
+  status: string;
+  reason?: string;
+}
+
+/** A developer-marked time range of one end's recording. */
+export interface VideoSegment {
+  id: string;
+  end: GameEnd;
+  label: string;
+  start_s: number;
+  end_s: number;
+}
+
+export interface SegmentReport extends AnalysisReport {
+  end: GameEnd;
+  label: string;
+  start_s: number;
+  end_s: number;
+  finished_at?: string;
 }
 
 export interface GameAnalysis {
   error?: string;
   finished_at?: string;
   cameras?: Partial<Record<GameEnd | string, AnalysisReport>>;
+  segments?: Record<string, SegmentReport>;
 }
 
 export interface Game {
@@ -327,6 +367,11 @@ export interface Game {
   ended_at: string | null;
   analysis_status: AnalysisStatus;
   analysis: GameAnalysis | null;
+  /** Data-collection game: a developer starts, pauses and resumes the recording. */
+  dev_mode: boolean;
+  /** Set when a developer rolled this game into a next one on the same cameras. */
+  next_game_id: string | null;
+  recording_state: RecordingState;
   created_at: string;
 }
 
@@ -347,6 +392,7 @@ export async function scheduleGame(data: {
   scheduled_at: string;
   court_mode: 'singles' | 'doubles';
   title?: string;
+  dev_mode?: boolean;
 }) {
   return request<Game>('/api/games/', { method: 'POST', body: JSON.stringify(data) });
 }
@@ -391,11 +437,35 @@ export interface DevGame {
   match_id: string;
   recording_id: string;
   recorded: number;
+  /** Which recordings exist per end (completed games only). */
+  videos: Partial<Record<GameEnd, Record<VideoKind, boolean>>>;
+  segments: VideoSegment[];
+  /** Scheduled games: why a developer can't start it yet ([] = both phones online, ready). */
+  start_blockers: string[] | null;
   started_at: string | null;
   ended_at: string | null;
   analysis_status: AnalysisStatus;
   analysis: GameAnalysis | null;
+  /** Data-collection game: a developer starts, pauses and resumes the recording. */
+  dev_mode: boolean;
+  /** Set when a developer rolled this game into a next one on the same cameras. */
+  next_game_id: string | null;
+  recording_state: RecordingState;
   created_at: string;
+}
+
+export type VideoKind = 'raw' | 'annotated';
+
+export interface VideoPrepare {
+  state: 'ready' | 'converting' | 'error';
+  error?: string;
+  kind: VideoKind;
+  end: GameEnd;
+  fps: number;
+  frames: number;
+  width: number;
+  height: number;
+  duration_s: number;
 }
 
 export async function getDevGames(status?: GameStatus) {
@@ -406,8 +476,51 @@ export async function getDevGame(id: string) {
   return request<DevGame>(`/api/dev/games/${id}/`);
 }
 
-export async function analyzeDevGame(id: string) {
-  return request<DevGame>(`/api/dev/games/${id}/analyze/`, { method: 'POST' });
+export async function analyzeDevGame(id: string, segmentIds?: string[]) {
+  return request<DevGame>(`/api/dev/games/${id}/analyze/`, {
+    method: 'POST',
+    body: JSON.stringify(segmentIds ? { segment_ids: segmentIds } : {}),
+  });
+}
+
+export async function saveDevGameSegments(id: string, segments: VideoSegment[]) {
+  return request<DevGame>(`/api/dev/games/${id}/segments/`, {
+    method: 'PUT',
+    body: JSON.stringify({ segments }),
+  });
+}
+
+/** Starts (or checks) the browser-playable conversion of a recording. Poll until state is ready. */
+export async function prepareDevGameVideo(id: string, end: GameEnd, kind: VideoKind) {
+  return request<VideoPrepare>(`/api/dev/games/${id}/video/${end}/prepare/`, {
+    method: 'POST',
+    body: JSON.stringify({ kind }),
+  });
+}
+
+export function devGameVideoUrl(id: string, end: GameEnd, kind: VideoKind) {
+  return `${API_URL}/api/dev/games/${id}/video/${end}/?kind=${kind}`;
+}
+
+/** ZIP for data analysis. No segment ids = every analysed run (full ends + segments). */
+export function devGameExportUrl(id: string, segmentIds?: string[]) {
+  const q = segmentIds && segmentIds.length ? `?segments=${segmentIds.map(encodeURIComponent).join(',')}` : '';
+  return `${API_URL}/api/dev/games/${id}/export/${q}`;
+}
+
+/** Start a scheduled game for both players; the server refuses unless both phones are online. */
+export async function startDevGame(id: string) {
+  return request<DevGame>(`/api/dev/games/${id}/start/`, { method: 'POST' });
+}
+
+/** Developer recording control for a live game (one file per game). */
+export async function recordDevGame(id: string, action: 'start' | 'pause' | 'resume') {
+  return request<DevGame>(`/api/dev/games/${id}/record/`, { method: 'POST', body: JSON.stringify({ action }) });
+}
+
+/** End this live game and start a new one for the same players and cameras; returns the new game. */
+export async function nextDevGame(id: string) {
+  return request<DevGame>(`/api/dev/games/${id}/next/`, { method: 'POST' });
 }
 
 export async function stopDevGame(id: string) {

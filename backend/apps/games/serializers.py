@@ -22,15 +22,19 @@ class GameSerializer(serializers.ModelSerializer):
     my_camera = serializers.SerializerMethodField()
     proposed_by = serializers.SerializerMethodField()
     awaiting_me = serializers.SerializerMethodField()
+    recording_state = serializers.SerializerMethodField()
 
     class Meta:
         model = Game
         fields = [
             'id', 'title', 'connection', 'scheduled_at', 'court_mode', 'status',
             'proposed_by', 'awaiting_me',
-            'partner', 'ends', 'my_end', 'my_camera',
+            'partner', 'ends', 'my_end', 'my_camera', 'dev_mode', 'next_game_id', 'recording_state',
             'started_at', 'ended_at', 'analysis_status', 'analysis', 'created_at',
         ]
+
+    def get_recording_state(self, obj):
+        return services.recording_state(obj)
 
     def _me(self):
         return self.context['request'].user
@@ -67,12 +71,16 @@ class DevGameSerializer(serializers.ModelSerializer):
     players = serializers.SerializerMethodField()
     ends = serializers.SerializerMethodField()
     recorded = serializers.SerializerMethodField()
+    videos = serializers.SerializerMethodField()
+    start_blockers = serializers.SerializerMethodField()
+    recording_state = serializers.SerializerMethodField()
 
     class Meta:
         model = Game
         fields = [
             'id', 'title', 'scheduled_at', 'court_mode', 'status', 'players', 'ends',
-            'match_id', 'recording_id', 'recorded', 'started_at', 'ended_at',
+            'match_id', 'recording_id', 'recorded', 'videos', 'segments', 'start_blockers',
+            'dev_mode', 'next_game_id', 'recording_state', 'started_at', 'ended_at',
             'analysis_status', 'analysis', 'created_at',
         ]
 
@@ -88,12 +96,38 @@ class DevGameSerializer(serializers.ModelSerializer):
     def get_recorded(self, obj):
         return len(services.recording_files(obj)) if obj.status == 'completed' else 0
 
+    def get_recording_state(self, obj):
+        return services.recording_state(obj)
+
+    def get_start_blockers(self, obj):
+        """Scheduled games only: reasons a developer can't start it yet ([] = ready)."""
+        return services.start_blockers(obj) if obj.status == 'scheduled' else None
+
+    def get_videos(self, obj):
+        """Which recordings exist per end: {'end_a': {'raw': bool, 'annotated': bool}, ...}."""
+        if obj.status != 'completed' or not obj.recording_id:
+            return {}
+        from apps.field.views import get_field_manager
+
+        from .media import KINDS, recording_path
+
+        manager = get_field_manager()
+        return {
+            end: {
+                kind: recording_path(manager, obj.recording_id, services.camera_for_end(obj, end), kind) is not None
+                for kind in KINDS
+            }
+            for end in ('end_a', 'end_b')
+        }
+
 
 class GameCreateSerializer(serializers.Serializer):
     connection_id = serializers.CharField()
     scheduled_at = serializers.DateTimeField()
     court_mode = serializers.ChoiceField(choices=['singles', 'doubles'], default='singles')
     title = serializers.CharField(max_length=120, required=False, allow_blank=True)
+    # Data-collection game: no automatic recording; a developer controls it.
+    dev_mode = serializers.BooleanField(required=False, default=False)
 
     def validate_scheduled_at(self, value):
         if value < timezone.now() - timezone.timedelta(minutes=5):

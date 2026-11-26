@@ -1,0 +1,5 @@
+# For notebooks/post_analysis.ipynb (comparing exported CLEAR analysis runs)
+pandas>=2.0
+numpy>=1.26
+matplotlib>=3.8
+jupyterlab>=4.0

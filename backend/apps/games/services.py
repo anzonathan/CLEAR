@@ -2,6 +2,7 @@
 
 import logging
 import os
+import re
 import threading
 from pathlib import Path
 
@@ -90,8 +91,10 @@ def release_end(game, user, save=True):
     slot = game.slot_for(user)
     if slot is None:
         return game
-    if game.status == 'live':
-        raise GameError('Stop the game before changing cameras.')
+    if game.status != 'scheduled':
+        # A finished game can share its cameras with the next game (dev "Next game"),
+        # so releasing would delete a camera that is still in use.
+        raise GameError('Cameras can only be changed before the game starts.')
     manager = get_field_manager()
     cam_id = game.camera_a_id if slot == 'end_a' else game.camera_b_id
     if manager and cam_id:
@@ -186,16 +189,124 @@ def _start_locked(game):
     except ValueError as exc:
         raise GameError(str(exc))
     game.match_id = manager.match_id or ''
-    try:
-        rec = manager.start_recording([game.camera_a_id, game.camera_b_id], name=str(game))
-        game.recording_id = str(rec.get('id') or '')
-    except ValueError as exc:
-        # Live analysis still runs; only the recording for later review is lost.
-        log.warning('Game %s: recording not started: %s', game.id, exc)
+    if not game.dev_mode:  # dev-mode games wait for a developer to start the recording
+        try:
+            rec = manager.start_recording([game.camera_a_id, game.camera_b_id], name=str(game))
+            game.recording_id = str(rec.get('id') or '')
+        except ValueError as exc:
+            # Live analysis still runs; only the recording for later review is lost.
+            log.warning('Game %s: recording not started: %s', game.id, exc)
     game.status = 'live'
     game.started_at = timezone.now()
     game.save()
     return game
+
+
+def start_blockers(game):
+    """Why a developer can't start this game yet ([] = both players' phones are online)."""
+    if game.status != 'scheduled':
+        return ['Only scheduled games can be started.']
+    out = []
+    for end, cam_id, user in (
+        ('end_a', game.camera_a_id, game.camera_a_user),
+        ('end_b', game.camera_b_id, game.camera_b_user),
+    ):
+        if not cam_id:
+            out.append(f'No player has taken {END_LABEL[end]} yet.')
+            continue
+        state = camera_state(cam_id) or {}
+        who = user.name if user and user.name else 'The player'
+        if not state.get('online'):
+            out.append(f"{who}'s phone ({END_LABEL[end]}) is offline.")
+        elif state.get('preview'):
+            out.append(f'{END_LABEL[end]} is in a calibration preview. Stop it first.')
+    return out
+
+
+def dev_start_game(game):
+    """Start a scheduled game from dev tools, only when both players' phones are online."""
+    blockers = start_blockers(game)
+    if blockers:
+        raise GameError(' '.join(blockers), status=409)
+    return start_game(game)
+
+
+def recording_state(game):
+    """'off' | 'recording' | 'paused' while live; 'saved' / 'none' once the game is over."""
+    if game.status != 'live':
+        return 'saved' if game.recording_id else 'none'
+    manager = get_field_manager()
+    rec = getattr(manager, 'recording', None) if manager else None
+    if not game.recording_id or rec is None or rec.id != game.recording_id:
+        return 'off'
+    return 'paused' if getattr(rec, 'paused', False) else 'recording'
+
+
+def dev_record(game, action):
+    """Developer recording control for a live game: start | pause | resume (one file per game)."""
+    if game.status != 'live':
+        raise GameError('Recording can only be controlled while the game is live.')
+    manager = require_manager()
+    state = recording_state(game)
+    try:
+        if action == 'start':
+            if state != 'off':
+                raise GameError('This game is already recording.' if state == 'recording' else 'Recording is paused: resume it.')
+            if game.recording_id:
+                raise GameError('This game already has a recording that was closed. Start a next game to record again.')
+            if manager.recording is not None:
+                raise GameError('Another recording is running on the server.', status=409)
+            rec = manager.start_recording([game.camera_a_id, game.camera_b_id], name=str(game))
+            game.recording_id = str(rec.get('id') or '')
+            game.save(update_fields=['recording_id', 'updated_at'])
+        elif action == 'pause':
+            if state != 'recording':
+                raise GameError('Nothing is recording right now.')
+            manager.pause_recording()
+        elif action == 'resume':
+            if state != 'paused':
+                raise GameError('The recording is not paused.')
+            manager.resume_recording()
+        else:
+            raise GameError('action must be start, pause or resume.')
+    except ValueError as exc:  # field manager refused (e.g. camera not active)
+        raise GameError(str(exc), status=409)
+    return game
+
+
+def _next_title(title):
+    base, n = title or '', 2
+    m = re.match(r'^(.*?)\s*#(\d+)$', base)
+    if m:
+        base, n = m.group(1), int(m.group(2)) + 1
+    return f'{base or "Game"} #{n}'[:120]
+
+
+def dev_next_game(game):
+    """End this live game (its recording is closed and kept) and start a new game for the same
+    players on the same cameras, so phones keep streaming. Dev-mode games start unrecorded."""
+    if game.status != 'live':
+        raise GameError('Only a live game can roll into a next game.')
+    if not (game.camera_a_id and game.camera_b_id):
+        raise GameError('Both ends need a camera.')
+    nxt = Game.objects.create(
+        connection=game.connection, created_by=game.created_by, scheduled_at=timezone.now(),
+        court_mode=game.court_mode, title=_next_title(game.title), dev_mode=game.dev_mode,
+        # Both players already accepted the game this one continues, so skip the invite.
+        status='scheduled', proposed_by=game.proposed_by,
+        camera_a_id=game.camera_a_id, camera_a_user=game.camera_a_user,
+        camera_b_id=game.camera_b_id, camera_b_user=game.camera_b_user,
+    )
+    # Link before ending: phones stop polling once they see "completed", so that same
+    # response must already say where to go next.
+    game.next_game = nxt
+    stop_game(game)  # saves status + next_game together, closes the recording
+    try:
+        return start_game(nxt)
+    except GameError:
+        # Leave the new game scheduled: phones (or Start game in dev tools) can start it.
+        log.warning('Next game %s created but not started', nxt.id, exc_info=True)
+        return Game.objects.get(pk=nxt.pk)
 
 
 def start_preview(game):
@@ -255,13 +366,73 @@ def recording_files(game):
     return out
 
 
+def camera_for_end(game, end):
+    return game.camera_a_id if end == 'end_a' else game.camera_b_id if end == 'end_b' else ''
+
+
+# ------------------------------------------------------------------ segments
+SEGMENT_ID_RE = re.compile(r'^[A-Za-z0-9_-]{1,32}$')
+MAX_SEGMENTS = 200
+
+
+def clean_segments(raw):
+    """Validate a client-sent segment list. Raises GameError on bad input."""
+    if not isinstance(raw, list):
+        raise GameError('segments must be a list.')
+    if len(raw) > MAX_SEGMENTS:
+        raise GameError(f'At most {MAX_SEGMENTS} segments per game.')
+    out, seen = [], set()
+    for i, s in enumerate(raw):
+        if not isinstance(s, dict):
+            raise GameError(f'Segment {i + 1} is not an object.')
+        sid = str(s.get('id', ''))
+        if not SEGMENT_ID_RE.match(sid) or sid in seen:
+            raise GameError(f'Segment {i + 1} has a missing, invalid or duplicate id.')
+        end = s.get('end')
+        if end not in END_LABEL:
+            raise GameError(f'Segment {i + 1}: end must be end_a or end_b.')
+        try:
+            start_s = round(float(s.get('start_s')), 3)
+            end_s = round(float(s.get('end_s')), 3)
+        except (TypeError, ValueError):
+            raise GameError(f'Segment {i + 1}: start_s and end_s must be numbers.')
+        if start_s < 0 or end_s <= start_s:
+            raise GameError(f'Segment {i + 1}: end must be after start.')
+        label = str(s.get('label') or f'Segment {i + 1}').strip()[:80]
+        seen.add(sid)
+        out.append({'id': sid, 'end': end, 'label': label, 'start_s': start_s, 'end_s': end_s})
+    return out
+
+
+def update_segments(game, raw):
+    segments = clean_segments(raw)
+    game.segments = segments
+    # Forget analysis of segments that no longer exist.
+    analysis = dict(game.analysis or {})
+    if analysis.get('segments'):
+        keep = {s['id'] for s in segments}
+        analysis['segments'] = {k: v for k, v in analysis['segments'].items() if k in keep}
+        game.analysis = analysis
+    game.save(update_fields=['segments', 'analysis', 'updated_at'])
+    return game
+
+
+# ------------------------------------------------------------------ analysis
 def analysis_dir(game):
     manager = require_manager()
     return Path(manager.data_dir) / 'analysis' / game.id
 
 
-def start_analysis(game):
-    """Run the full offline pipeline on each recorded camera in a background thread."""
+def segment_dir(game, seg):
+    return analysis_dir(game) / camera_for_end(game, seg['end']) / 'segments' / seg['id']
+
+
+def start_analysis(game, segment_ids=None):
+    """Run the offline pipeline in a background thread.
+
+    ``segment_ids`` None: the whole recording of each camera (as before).
+    Otherwise only those segments, each over its own time range.
+    """
     if game.status != 'completed':
         raise GameError('Only finished games can be analysed.')
     if game.analysis_status == 'running':
@@ -269,40 +440,151 @@ def start_analysis(game):
     files = recording_files(game)
     if not files:
         raise GameError('This game has no recorded video to analyse.')
+    segments = None
+    if segment_ids is not None:
+        by_id = {s['id']: s for s in (game.segments or [])}
+        missing = [sid for sid in segment_ids if sid not in by_id]
+        if missing or not segment_ids:
+            raise GameError('Pick at least one existing segment to analyse.')
+        segments = [by_id[sid] for sid in segment_ids]
+        recorded = {cam for cam, _ in files}
+        for seg in segments:
+            if camera_for_end(game, seg['end']) not in recorded:
+                raise GameError(f'{END_LABEL[seg["end"]]} has no recording for segment "{seg["label"]}".')
     out_root = analysis_dir(game)
     game.analysis_status = 'running'
     game.save(update_fields=['analysis_status', 'updated_at'])
-    threading.Thread(target=_run_analysis, args=(game.id, files, out_root), daemon=True).start()
+    threading.Thread(target=_run_analysis, args=(game.id, files, out_root, segments), daemon=True).start()
     return game
 
 
-def _run_analysis(game_id, files, out_root):
+def _calibrator_for(manager, camera_id):
+    from src.calibration.homography import CourtCalibrator
+
+    calib_path = manager.registry.calibration_path(camera_id) if manager else None
+    if calib_path and calib_path.exists():
+        return CourtCalibrator.load(calib_path)
+    return None
+
+
+def _run_full(game, manager, files, out_root):
+    from src.pipeline import ClearPipeline
+
+    results = {}
+    for camera_id, path in files:
+        if not path.exists():
+            results[camera_id] = {'error': 'Recording file is missing.'}
+            continue
+        calib = _calibrator_for(manager, camera_id)
+        end = 'end_a' if camera_id == game.camera_a_id else 'end_b'
+        pipeline = ClearPipeline(calibrator=calib, court_mode=game.court_mode)
+        report = pipeline.run_video(path, out_root / camera_id)
+        report.pop('video_out_path', None)
+        report.pop('annotated_video', None)
+        results[end] = {'camera_id': camera_id, 'calibrated': calib is not None, **report}
+    return results
+
+
+def _run_segments(game, manager, files, segments):
+    from src.pipeline import ClearPipeline
+
+    from .media import video_info
+
+    paths = dict(files)
+    results = {}
+    for seg in segments:
+        camera_id = camera_for_end(game, seg['end'])
+        path = paths.get(camera_id)
+        base = {'end': seg['end'], 'camera_id': camera_id, 'label': seg['label'],
+                'start_s': seg['start_s'], 'end_s': seg['end_s']}
+        if not path or not path.exists():
+            results[seg['id']] = {**base, 'error': 'Recording file is missing.'}
+            continue
+        fps = video_info(path)['fps']
+        calib = _calibrator_for(manager, camera_id)
+        pipeline = ClearPipeline(calibrator=calib, court_mode=game.court_mode)
+        try:
+            report = pipeline.run_video(
+                path, segment_dir(game, seg),
+                start_frame=int(round(seg['start_s'] * fps)),
+                end_frame=int(round(seg['end_s'] * fps)),
+            )
+        except Exception as exc:
+            log.exception('Segment %s of game %s failed', seg['id'], game.id)
+            results[seg['id']] = {**base, 'error': str(exc)}
+            continue
+        report.pop('annotated_video', None)
+        results[seg['id']] = {**base, 'calibrated': calib is not None,
+                              'finished_at': timezone.now().isoformat(), **report}
+    return results
+
+
+def _run_analysis(game_id, files, out_root, segments=None):
     close_old_connections()
     try:
-        from src.calibration.homography import CourtCalibrator
-        from src.pipeline import ClearPipeline
-
         game = Game.objects.get(id=game_id)
         manager = get_field_manager()
-        results = {}
-        for camera_id, path in files:
-            if not path.exists():
-                results[camera_id] = {'error': 'Recording file is missing.'}
-                continue
-            calib = None
-            calib_path = manager.registry.calibration_path(camera_id) if manager else None
-            if calib_path and calib_path.exists():
-                calib = CourtCalibrator.load(calib_path)
-            end = 'end_a' if camera_id == game.camera_a_id else 'end_b'
-            pipeline = ClearPipeline(calibrator=calib, court_mode=game.court_mode)
-            report = pipeline.run_video(path, out_root / camera_id)
-            report.pop('video_out_path', None)
-            results[end] = {'camera_id': camera_id, 'calibrated': calib is not None, **report}
-        Game.objects.filter(id=game_id).update(
-            analysis_status='done', analysis={'cameras': results, 'finished_at': timezone.now().isoformat()}
-        )
+        analysis = dict(game.analysis or {})
+        analysis.pop('error', None)
+        if segments is None:
+            analysis['cameras'] = _run_full(game, manager, files, out_root)
+            analysis['finished_at'] = timezone.now().isoformat()
+        else:
+            done = dict(analysis.get('segments') or {})
+            done.update(_run_segments(game, manager, files, segments))
+            analysis['segments'] = done
+        Game.objects.filter(id=game_id).update(analysis_status='done', analysis=analysis)
     except Exception as exc:  # surface any pipeline failure to the dev UI
         log.exception('Analysis failed for game %s', game_id)
-        Game.objects.filter(id=game_id).update(analysis_status='failed', analysis={'error': str(exc)})
+        game = Game.objects.filter(id=game_id).first()
+        analysis = dict((game.analysis if game else None) or {})
+        analysis['error'] = str(exc)
+        Game.objects.filter(id=game_id).update(analysis_status='failed', analysis=analysis)
     finally:
         close_old_connections()
+
+
+# ------------------------------------------------------------------ export
+def export_runs(game, segment_ids=None):
+    """Runs to put in a data-export bundle.
+
+    ``segment_ids`` None: every analysed run (full ends + segments); otherwise just those segments.
+    """
+    root = analysis_dir(game)
+    players = [u.name if u else None for u in (game.connection.user_a, game.connection.user_b)]
+    common = {
+        'game_id': game.id,
+        'game_title': game.title,
+        'players': players,
+        'court_mode': game.court_mode,
+        'recording_id': game.recording_id,
+        'game_started_at': game.started_at.isoformat() if game.started_at else None,
+    }
+    analysis = game.analysis or {}
+    runs = []
+    if segment_ids is None:
+        for end, rep in (analysis.get('cameras') or {}).items():
+            cam = rep.get('camera_id') or camera_for_end(game, end)
+            runs.append({
+                'dir': root / cam,
+                'run_id': f'{end}_full',
+                'meta': {**common, 'end': end, 'camera_id': cam, 'segment_id': None,
+                         'label': f'{END_LABEL.get(end, end)} full recording',
+                         'calibrated': rep.get('calibrated')},
+            })
+    by_id = {s['id']: s for s in (game.segments or [])}
+    wanted = list(by_id) if segment_ids is None else segment_ids
+    seg_reports = analysis.get('segments') or {}
+    for sid in wanted:
+        seg = by_id.get(sid)
+        if not seg or sid not in seg_reports or seg_reports[sid].get('error'):
+            continue
+        runs.append({
+            'dir': segment_dir(game, seg),
+            'run_id': f'{seg["end"]}_{sid}',
+            'meta': {**common, 'end': seg['end'], 'camera_id': camera_for_end(game, seg['end']),
+                     'segment_id': sid, 'label': seg['label'],
+                     'segment_start_s': seg['start_s'], 'segment_end_s': seg['end_s'],
+                     'calibrated': seg_reports[sid].get('calibrated')},
+        })
+    return runs

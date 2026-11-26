@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import csv
 import json
 from pathlib import Path
 from typing import Dict, List, Literal, Optional, Tuple
@@ -20,9 +21,33 @@ from src.faults.foot_faults import FootFaultJudge
 from src.faults.service_faults import ServiceFaultJudge
 from src.judge.bounce_judge import BounceJudge
 from src.judge.hud_renderer import BroadcastHUDRenderer
+from src.orientation import ensure_landscape, landscape_size
 from src.score.score_engine import TennisScoreEngine
 from src.track.ball_tracker import BallState, KalmanBallTracker
 from src.track.player_tracker import PlayerTracker
+
+
+TRACK_BALL_FIELDS = (
+    ("ball_u", "u"),
+    ("ball_v", "v"),
+    ("ball_x_m", "court_x_m"),
+    ("ball_y_m", "court_y_m"),
+    ("ball_speed_kmh", "speed_kmh"),
+    ("ball_conf", "conf"),
+)
+TRACK_COLUMNS = (
+    ["frame_idx", "t_s", "ball_state"]
+    + [k for k, _ in TRACK_BALL_FIELDS]
+    + [f"p{pid}_{f}" for pid in (1, 2) for f in ("u", "v", "x_m", "y_m", "speed_kmh", "conf")]
+)
+
+
+def write_tracks_csv(path: Path, rows: List[Dict[str, object]]) -> None:
+    with path.open("w", newline="", encoding="utf-8") as fh:
+        w = csv.DictWriter(fh, fieldnames=TRACK_COLUMNS)
+        w.writeheader()
+        for r in rows:
+            w.writerow({k: ("" if r.get(k) is None else r.get(k)) for k in TRACK_COLUMNS})
 
 
 class ClearPipeline:
@@ -93,6 +118,7 @@ class ClearPipeline:
             detections=dets.players,
             calibrator=self.calibrator,
         )
+        self.last_players = players
 
         new_bounce = self.bounce_judge.update(
             ball_history=self.ball_tracker.history,
@@ -229,8 +255,15 @@ class ClearPipeline:
         video_path: str | Path,
         out_dir: str | Path,
         max_frames: Optional[int] = None,
+        start_frame: int = 0,
+        end_frame: Optional[int] = None,
     ) -> Dict[str, object]:
-        """Run pipeline on a video file and write annotated video, JSON logs, and 2D court chart."""
+        """Run pipeline on a video file and write annotated video, JSON logs, tracks and court chart.
+
+        ``start_frame``/``end_frame`` (end exclusive) restrict analysis to one segment of the
+        video. Frame indices in every output stay absolute to the source video, so bounces and
+        tracks line up with the original timeline.
+        """
         in_path = Path(video_path)
         if not in_path.exists():
             raise FileNotFoundError(f"Video file not found: {in_path}")
@@ -250,30 +283,54 @@ class ClearPipeline:
         self.ball_tracker.fps = self.fps
         self.player_tracker.fps = self.fps
 
-        w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-        h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        w, h = landscape_size(
+            int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)),
+            int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)),
+        )
 
         video_out_file = out_path / "annotated_rally.mp4"
         fourcc = cv2.VideoWriter_fourcc(*"mp4v")
         writer = cv2.VideoWriter(str(video_out_file), fourcc, self.fps, (w, h))
 
-        frame_idx = 0
+        n_source = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
+        start_frame = max(0, int(start_frame))
+        if start_frame > 0:
+            cap.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
+
+        track_rows: List[Dict[str, object]] = []
+        self.last_players = {}
+        frame_idx = start_frame
+        processed = 0
         while True:
+            if end_frame is not None and frame_idx >= end_frame:
+                break
+            if max_frames is not None and processed >= max_frames:
+                break
             ret, frame = cap.read()
             if not ret:
                 break
-            if max_frames is not None and frame_idx >= max_frames:
-                break
 
-            annotated, _ = self.process_frame(frame, frame_idx=frame_idx)
+            frame = ensure_landscape(frame)
+            annotated, ball_state = self.process_frame(frame, frame_idx=frame_idx)
             writer.write(annotated)
+            track_rows.append(self._track_row(frame_idx, ball_state))
             frame_idx += 1
+            processed += 1
 
         cap.release()
         writer.release()
         self._finalize_service_faults()
 
-        report = self.build_report(total_frames=frame_idx, video_out_path=str(video_out_file))
+        report = self.build_report(total_frames=processed, video_out_path=str(video_out_file))
+        report["segment"] = {
+            "start_frame": start_frame,
+            "end_frame": frame_idx,
+            "start_s": round(start_frame / self.fps, 3),
+            "end_s": round(frame_idx / self.fps, 3),
+            "source_frames": n_source,
+            "source": in_path.name,
+        }
+        write_tracks_csv(out_path / "tracks.csv", track_rows)
         (out_path / "bounces.json").write_text(
             json.dumps([b.to_dict() for b in self.bounce_judge.bounces], indent=2),
             encoding="utf-8",
@@ -284,6 +341,27 @@ class ClearPipeline:
         )
         self.save_court_chart(out_path / "court_analytics.png")
         return report
+
+    def _track_row(self, frame_idx: int, ball: Optional[BallState]) -> Dict[str, object]:
+        """One per-frame record of ball and player state for tracks.csv."""
+        row: Dict[str, object] = {
+            "frame_idx": frame_idx,
+            "t_s": round(frame_idx / self.fps, 4),
+            "ball_state": "none" if ball is None else ("predicted" if ball.is_predicted else "detected"),
+        }
+        for key, attr in TRACK_BALL_FIELDS:
+            val = getattr(ball, attr) if ball is not None else None
+            row[key] = None if val is None else round(float(val), 4)
+        players = getattr(self, "last_players", {}) or {}
+        for pid in (1, 2):
+            p = players.get(pid)
+            row[f"p{pid}_u"] = round(float(p.foot_uv[0]), 2) if p else None
+            row[f"p{pid}_v"] = round(float(p.foot_uv[1]), 2) if p else None
+            row[f"p{pid}_x_m"] = round(float(p.court_xy_m[0]), 4) if p else None
+            row[f"p{pid}_y_m"] = round(float(p.court_xy_m[1]), 4) if p else None
+            row[f"p{pid}_speed_kmh"] = round(float(p.speed_kmh), 2) if p else None
+            row[f"p{pid}_conf"] = round(float(p.conf), 3) if p else None
+        return row
 
     def build_report(
         self,

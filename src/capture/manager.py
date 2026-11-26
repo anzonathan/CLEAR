@@ -29,6 +29,7 @@ from src.calibration.homography import CourtCalibrator
 from src.capture.registry import CameraRegistry
 from src.capture.recorder import CameraRecorder, RecordingSession, get_recording, list_recordings
 from src.detect.detector import FrameDetections, HybridTennisDetector
+from src.orientation import ensure_landscape
 from src.track.match_fuser import FusedCameraInput, MatchFuser, project_fused_to_image
 
 
@@ -118,7 +119,7 @@ class FieldCameraRuntime:
 
     # ------------------------------------------------------------------ ingest
     def submit_frame(self, frame_bgr: np.ndarray) -> None:
-        frame = _resize_max_width(frame_bgr, self.max_width)
+        frame = _resize_max_width(ensure_landscape(frame_bgr), self.max_width)
         with self.lock:
             self.raw_frame = frame
             self.raw_seq += 1
@@ -870,11 +871,27 @@ class FieldManager:
         meta = session.finalize()
         return self.get_recording(session.id) or meta
 
+    def pause_recording(self) -> Dict[str, object]:
+        """Stop writing frames but keep the recording's files open, to resume into them."""
+        with self._record_lock:
+            if self.recording is None:
+                raise ValueError("No recording in progress.")
+            self.recording.set_paused(True)
+            return self.recording_status()
+
+    def resume_recording(self) -> Dict[str, object]:
+        with self._record_lock:
+            if self.recording is None:
+                raise ValueError("No recording in progress.")
+            self.recording.set_paused(False)
+            return self.recording_status()
+
     def recording_status(self) -> Dict[str, object]:
         if self.recording is None:
             return {"recording": False}
         return {
             "recording": True,
+            "paused": bool(self.recording.paused),
             "id": self.recording.id,
             "name": self.recording.name,
             "cameras": list(self.recording.recorders.keys()),

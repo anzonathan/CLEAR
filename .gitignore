@@ -16,3 +16,4 @@ data/uploaded_rally.mp4
 models/*.pt
 .env.*
 !.env.example
+.claude/worktrees/
